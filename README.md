@@ -94,13 +94,6 @@ tests, a production build check, browser tests with real PDF bytes and a fake
 camera stream, and Electron integration tests for the secure protocol and
 managed storage.
 
-Additional PDF fixtures for manual testing can be generated with:
-
-```bash
-/Users/aiden/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
-  work/create_pdf_fixtures.py
-```
-
 ## Project map
 
 - `app/` — application shell, metadata, and styles
