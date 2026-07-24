@@ -875,7 +875,7 @@ export function GestureReaderApp() {
         )}
 
       <footer className="library-footer">
-        <span>Gesture Reader 1.0.3</span>
+        <span>Gesture Reader 1.0.4</span>
         <span>No account · No uploads · No telemetry</span>
       </footer>
 

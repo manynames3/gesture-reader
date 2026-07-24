@@ -6,6 +6,7 @@ export interface PalmSample {
   y: number;
   confidence: number;
   open: boolean;
+  handPresent: boolean;
 }
 
 export interface SwipeDetection {
@@ -65,6 +66,7 @@ export class SwipeDetector {
   }
 
   push(sample: PalmSample): SwipeDetection | undefined {
+    const wasArmed = this.isArmed();
     const open = sample.open && sample.confidence >= OPEN_PALM_THRESHOLD;
     this.openHistory.push(open);
     this.openHistory = this.openHistory.slice(-4);
@@ -77,13 +79,15 @@ export class SwipeDetector {
           this.requiresReset = false;
           this.resetFrames = 0;
         }
-      } else if (!this.isArmed()) {
+        return undefined;
+      }
+      if (!(wasArmed && sample.handPresent)) {
         // Three of the last four qualifying frames still counts as armed.
         // Preserve the trajectory through one transient classifier miss,
         // which is common while an otherwise-open palm is moving.
-        this.samples = [];
+        if (!this.isArmed()) this.samples = [];
+        return undefined;
       }
-      return undefined;
     }
 
     const { cooldown, displacement } = sensitivityConfig[this.sensitivity];
@@ -108,7 +112,7 @@ export class SwipeDetector {
       return undefined;
     }
 
-    if (!this.isArmed()) {
+    if (!this.isArmed() && !(wasArmed && sample.handPresent)) {
       this.samples = [];
       return undefined;
     }

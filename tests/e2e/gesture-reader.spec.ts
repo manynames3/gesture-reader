@@ -440,12 +440,15 @@ test.describe("Gesture Reader", () => {
         confidence: 0.91,
         state: "armed",
         handPresent: true,
-        armProgress: 3,
+        // Guard against an inconsistent/stale progress value from the worker:
+        // an armed snapshot must always render as a complete palm lock.
+        armProgress: 0,
       });
     });
     await expect(
       page.getByText("Palm ready — swipe left"),
     ).toBeVisible();
+    await expect(page.getByText("3/3 lock")).toBeVisible();
 
     await page.evaluate(() => {
       (

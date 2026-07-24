@@ -10,8 +10,9 @@ function palm(
   y = 0.5,
   confidence = 0.9,
   open = true,
+  handPresent = open,
 ): PalmSample {
-  return { timestamp, x, y, confidence, open };
+  return { timestamp, x, y, confidence, open, handPresent };
 }
 
 function run(detector: SwipeDetector, samples: PalmSample[]) {
@@ -126,6 +127,21 @@ describe("SwipeDetector", () => {
       palm(150, 0.65, 0.5, 0, false),
       palm(220, 0.58),
       palm(280, 0.49),
+    ]);
+
+    expect(detections).toEqual([
+      expect.objectContaining({ direction: "left" }),
+    ]);
+  });
+
+  it("tracks an armed palm through brief classifier blur during motion", () => {
+    const detector = new SwipeDetector();
+    const detections = run(detector, [
+      palm(0, 0.72),
+      palm(50, 0.72),
+      palm(100, 0.72),
+      palm(165, 0.6, 0.5, 0.45, false, true),
+      palm(235, 0.48, 0.5, 0.4, false, true),
     ]);
 
     expect(detections).toEqual([

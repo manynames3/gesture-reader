@@ -99,6 +99,7 @@ export type GestureEvent =
       confidence: number;
       handPresent: boolean;
       armProgress: number;
+      status: "ready" | "hand" | "cooldown";
     };
 
 export interface GestureEngine {

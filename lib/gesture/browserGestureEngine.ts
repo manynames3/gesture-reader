@@ -47,21 +47,29 @@ export class BrowserGestureEngine implements GestureEngine {
         const now = performance.now();
         this.frameTimes.push(now);
         this.frameTimes = this.frameTimes.filter((time) => now - time <= 1_000);
+        const status =
+          message.state === "cooldown"
+            ? "cooldown"
+            : message.state === "armed"
+              ? "hand"
+              : "ready";
+        const reportedProgress = Number(message.armProgress);
+        const armProgress =
+          status === "hand"
+            ? 3
+            : Number.isFinite(reportedProgress)
+              ? Math.min(3, Math.max(0, Math.floor(reportedProgress)))
+              : 0;
         this.emit({
           type: "metrics",
           fps: this.frameTimes.length,
           confidence: message.confidence,
-          handPresent: message.handPresent,
-          armProgress: message.armProgress,
-        });
-        this.emit({
-          type: "status",
-          status:
-            message.state === "cooldown"
-              ? "cooldown"
-              : message.state === "armed"
-                ? "hand"
-                : "ready",
+          status,
+          handPresent:
+            status === "hand" ||
+            message.handPresent === true ||
+            message.confidence > 0,
+          armProgress,
         });
       } else if (message.type === "gesture") {
         this.emit(message);

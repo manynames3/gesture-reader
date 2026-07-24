@@ -116,6 +116,7 @@ export function GesturePanel({
         return;
       }
       if (event.type === "metrics") {
+        if (!pausedRef.current) setStatus(event.status);
         setFps(event.fps);
         setConfidence(event.confidence);
         setHandPresent(event.handPresent);
@@ -354,7 +355,9 @@ export function GesturePanel({
     calibrationRef.current = "left";
     setCalibration("left");
     setCalibrationFeedback("");
+    setStatus("ready");
     setConfidence(0);
+    setHandPresent(false);
     setArmProgress(0);
     engineRef.current?.reset();
   }
