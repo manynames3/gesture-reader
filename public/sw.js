@@ -1,4 +1,4 @@
-const CACHE_NAME = "gesture-reader-v2";
+const CACHE_NAME = "gesture-reader-v3";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",

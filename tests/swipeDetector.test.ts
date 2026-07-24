@@ -19,6 +19,18 @@ function run(detector: SwipeDetector, samples: PalmSample[]) {
 }
 
 describe("SwipeDetector", () => {
+  it("reports three-frame palm lock progress", () => {
+    const detector = new SwipeDetector();
+
+    detector.push(palm(0, 0.72));
+    expect(detector.getArmProgress()).toBe(1);
+    detector.push(palm(50, 0.72));
+    expect(detector.getArmProgress()).toBe(2);
+    detector.push(palm(100, 0.72));
+    expect(detector.getArmProgress()).toBe(3);
+    expect(detector.getState(100)).toBe("armed");
+  });
+
   it("arms on three of four frames and recognizes one left swipe", () => {
     const detector = new SwipeDetector();
     const detections = run(detector, [
@@ -96,12 +108,44 @@ describe("SwipeDetector", () => {
       palm(100, 0.72),
       palm(160, 0.62),
       palm(180, 0.5, 0.5, 0, false),
-      palm(220, 0.48),
+      palm(210, 0.5, 0.5, 0, false),
+      palm(250, 0.48),
     ]);
 
     expect(tooFast).toHaveLength(0);
     expect(tooSlow).toHaveLength(0);
     expect(lostHand).toHaveLength(0);
+  });
+
+  it("preserves an armed trajectory through one missed frame", () => {
+    const detector = new SwipeDetector();
+    const detections = run(detector, [
+      palm(0, 0.72),
+      palm(50, 0.72),
+      palm(100, 0.72),
+      palm(150, 0.65, 0.5, 0, false),
+      palm(220, 0.58),
+      palm(280, 0.49),
+    ]);
+
+    expect(detections).toEqual([
+      expect.objectContaining({ direction: "left" }),
+    ]);
+  });
+
+  it("clears an armed trajectory after two missed frames", () => {
+    const detector = new SwipeDetector();
+    const detections = run(detector, [
+      palm(0, 0.72),
+      palm(50, 0.72),
+      palm(100, 0.72),
+      palm(150, 0.65, 0.5, 0, false),
+      palm(200, 0.65, 0.5, 0, false),
+      palm(260, 0.48),
+      palm(320, 0.4),
+    ]);
+
+    expect(detections).toHaveLength(0);
   });
 
   it("requires reset and cooldown before accepting another swipe", () => {

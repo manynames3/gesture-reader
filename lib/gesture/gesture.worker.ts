@@ -27,7 +27,13 @@ type WorkerRequest =
 
 type WorkerResponse =
   | { type: "ready" }
-  | { type: "frameDone"; confidence: number; state: string }
+  | {
+      type: "frameDone";
+      confidence: number;
+      state: string;
+      handPresent: boolean;
+      armProgress: number;
+    }
   | {
       type: "gesture";
       direction: "left" | "right";
@@ -47,12 +53,21 @@ function assetUrl(path: string) {
 }
 
 function extractPalm(result: GestureRecognizerResult, timestamp: number) {
-  const gesture = result.gestures[0]?.[0];
+  const gesture = result.gestures[0]?.find(
+    (candidate) => candidate.categoryName === "Open_Palm",
+  );
   const landmarks = result.landmarks[0];
   const open = gesture?.categoryName === "Open_Palm";
   const confidence = open ? gesture.score : 0;
   if (!landmarks?.length) {
-    return { timestamp, x: 0.5, y: 0.5, confidence: 0, open: false };
+    return {
+      timestamp,
+      x: 0.5,
+      y: 0.5,
+      confidence: 0,
+      open: false,
+      handPresent: false,
+    };
   }
 
   const palmIndices = [0, 5, 9, 13, 17];
@@ -70,6 +85,7 @@ function extractPalm(result: GestureRecognizerResult, timestamp: number) {
     y: palm.y / palmIndices.length,
     confidence,
     open,
+    handPresent: true,
   };
 }
 
@@ -89,12 +105,15 @@ async function initialize(sensitivity: GestureSensitivity) {
     canvas: new OffscreenCanvas(640, 480),
     runningMode: "VIDEO",
     numHands: 1,
-    minHandDetectionConfidence: 0.6,
-    minHandPresenceConfidence: 0.6,
-    minTrackingConfidence: 0.6,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
     cannedGesturesClassifierOptions: {
       categoryAllowlist: ["Open_Palm"],
-      scoreThreshold: 0.7,
+      // Return the score even below the activation threshold so setup can
+      // explain why a visible hand has not armed yet. SwipeDetector still
+      // requires confidence >= 0.70.
+      scoreThreshold: 0,
       maxResults: 1,
     },
   });
@@ -125,7 +144,13 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     if (message.type === "frame") {
       if (!recognizer) {
         message.bitmap.close();
-        post({ type: "frameDone", confidence: 0, state: "idle" });
+        post({
+          type: "frameDone",
+          confidence: 0,
+          state: "idle",
+          handPresent: false,
+          armProgress: 0,
+        });
         return;
       }
 
@@ -143,6 +168,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           type: "frameDone",
           confidence: sample.confidence,
           state: detector.getState(message.timestamp),
+          handPresent: sample.handPresent,
+          armProgress: detector.getArmProgress(),
         });
       } finally {
         message.bitmap.close();

@@ -14,6 +14,7 @@ export interface SwipeDetection {
 }
 
 export type SwipeDetectorState = "idle" | "armed" | "cooldown";
+export const OPEN_PALM_THRESHOLD = 0.7;
 
 const sensitivityConfig: Record<
   GestureSensitivity,
@@ -59,19 +60,28 @@ export class SwipeDetector {
     return this.isArmed() ? "armed" : "idle";
   }
 
+  getArmProgress() {
+    return Math.min(3, this.openHistory.filter(Boolean).length);
+  }
+
   push(sample: PalmSample): SwipeDetection | undefined {
-    const open = sample.open && sample.confidence >= 0.7;
+    const open = sample.open && sample.confidence >= OPEN_PALM_THRESHOLD;
     this.openHistory.push(open);
     this.openHistory = this.openHistory.slice(-4);
 
     if (!open) {
-      this.samples = [];
       if (this.requiresReset) {
+        this.samples = [];
         this.resetFrames += 1;
         if (this.resetFrames >= 2) {
           this.requiresReset = false;
           this.resetFrames = 0;
         }
+      } else if (!this.isArmed()) {
+        // Three of the last four qualifying frames still counts as armed.
+        // Preserve the trajectory through one transient classifier miss,
+        // which is common while an otherwise-open palm is moving.
+        this.samples = [];
       }
       return undefined;
     }

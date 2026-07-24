@@ -1,7 +1,7 @@
 {
   "name": "gesture-reader",
   "productName": "Gesture Reader",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "main": "electron/main.cjs",
   "engines": {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserGestureEngine } from "@/lib/gesture/browserGestureEngine";
+import { OPEN_PALM_THRESHOLD } from "@/lib/gesture/swipeDetector";
 import type {
   GestureEvent,
   GestureSensitivity,
@@ -71,7 +72,10 @@ export function GesturePanel({
   const [showPreview, setShowPreview] = useState(true);
   const [fps, setFps] = useState(0);
   const [confidence, setConfidence] = useState(0);
+  const [handPresent, setHandPresent] = useState(false);
+  const [armProgress, setArmProgress] = useState(0);
   const [calibration, setCalibration] = useState<CalibrationStep>("off");
+  const [calibrationFeedback, setCalibrationFeedback] = useState("");
 
   useEffect(() => {
     externalPausedRef.current = paused;
@@ -114,26 +118,44 @@ export function GesturePanel({
       if (event.type === "metrics") {
         setFps(event.fps);
         setConfidence(event.confidence);
+        setHandPresent(event.handPresent);
+        setArmProgress(event.armProgress);
         return;
       }
+
+      const currentCalibration = calibrationRef.current;
+      if (currentCalibration === "left") {
+        if (event.direction === "left") {
+          calibrationRef.current = "right";
+          setCalibration("right");
+          setCalibrationFeedback("");
+        } else {
+          setCalibrationFeedback(
+            "A right swipe was detected. Move left as it appears in the mirrored preview.",
+          );
+        }
+        return;
+      }
+      if (currentCalibration === "right") {
+        if (event.direction === "right") {
+          calibrationRef.current = "complete";
+          setCalibration("complete");
+          setCalibrationFeedback("");
+        } else {
+          setCalibrationFeedback(
+            "A left swipe was detected. Move right as it appears in the mirrored preview.",
+          );
+        }
+        return;
+      }
+      if (currentCalibration !== "off") return;
 
       const direction = invertedRef.current
         ? event.direction === "left"
           ? "right"
           : "left"
         : event.direction;
-      const currentCalibration = calibrationRef.current;
-      if (currentCalibration === "left") {
-        if (direction === "left") setCalibration("right");
-        return;
-      }
-      if (currentCalibration === "right") {
-        if (direction === "right") setCalibration("complete");
-        return;
-      }
-      if (currentCalibration === "off" || currentCalibration === "complete") {
-        onGestureRef.current(direction);
-      }
+      onGestureRef.current(direction);
     },
     [],
   );
@@ -277,6 +299,65 @@ export function GesturePanel({
   }, [deviceId, enabled, handleEngineEvent]);
 
   const visibleStatus = paused && enabled ? "paused" : status;
+  const cameraStatus =
+    visibleStatus === "ready"
+      ? !handPresent
+        ? "Raise your open palm into view"
+        : confidence < OPEN_PALM_THRESHOLD
+          ? "Hand seen — spread your fingers"
+          : `Hold steady — ${armProgress}/3`
+      : visibleStatus === "hand"
+        ? "Palm locked — swipe now"
+        : statusCopy[visibleStatus];
+  const calibrationDirection =
+    calibration === "left" || calibration === "right" ? calibration : null;
+  const calibrationPrompt =
+    calibration === "off"
+      ? "Calibrate page turns"
+      : calibration === "complete"
+        ? "Both directions are ready"
+        : visibleStatus === "requesting" || visibleStatus === "loading"
+          ? "Starting on-device hand tracking"
+          : visibleStatus === "error"
+            ? "Camera needs attention"
+            : visibleStatus === "cooldown"
+              ? "Lower your hand briefly to reset"
+              : !handPresent
+                ? "Raise your whole open palm into view"
+                : confidence < OPEN_PALM_THRESHOLD
+                  ? "Spread your fingers and hold still"
+                  : visibleStatus !== "hand"
+                    ? `Hold still — palm lock ${armProgress}/3`
+                    : `Palm ready — swipe ${calibrationDirection}`;
+  const calibrationHint =
+    calibrationFeedback ||
+    (calibration === "off"
+      ? "Hold your palm still for a beat, then check one swipe in each direction."
+      : calibration === "complete"
+        ? "Calibration passed. Finish to enable page turns."
+        : visibleStatus === "cooldown"
+          ? "Move your hand out of the preview, wait for Ready, then raise it again."
+          : visibleStatus === "hand"
+            ? "Keep your palm facing the camera and move across about one quarter of the preview."
+            : handPresent
+              ? "Keep your wrist and all five fingers visible until the palm lock reaches 3/3."
+              : "Raise your hand above desk height so the full wrist and all five fingers are inside the preview.");
+
+  function handleCalibrationButton() {
+    if (calibration === "complete") {
+      calibrationRef.current = "off";
+      setCalibration("off");
+      setCalibrationFeedback("");
+      return;
+    }
+
+    calibrationRef.current = "left";
+    setCalibration("left");
+    setCalibrationFeedback("");
+    setConfidence(0);
+    setArmProgress(0);
+    engineRef.current?.reset();
+  }
 
   return (
     <aside
@@ -314,7 +395,7 @@ export function GesturePanel({
         )}
         <div className="camera-frame__status">
           <span className={`status-dot status-dot--${visibleStatus}`} />
-          {statusCopy[visibleStatus]}
+          {cameraStatus}
         </div>
       </div>
 
@@ -326,7 +407,8 @@ export function GesturePanel({
 
       <div className="gesture-metrics" aria-label="Gesture tracking metrics">
         <span>{fps || "—"} FPS</span>
-        <span>{Math.round(confidence * 100)}% palm confidence</span>
+        <span>{Math.round(confidence * 100)}% open palm</span>
+        <span>{armProgress}/3 lock</span>
       </div>
 
       <label className="field-label" htmlFor="camera-select">
@@ -383,12 +465,8 @@ export function GesturePanel({
       <div className="calibration-card">
         <div>
           <p className="eyebrow">Two-step check</p>
-          <strong>
-            {calibration === "off" && "Calibrate page turns"}
-            {calibration === "left" && "Swipe your open palm left"}
-            {calibration === "right" && "Great. Now swipe right"}
-            {calibration === "complete" && "Both directions are ready"}
-          </strong>
+          <strong aria-live="polite">{calibrationPrompt}</strong>
+          <p className="calibration-hint">{calibrationHint}</p>
         </div>
         <div className="calibration-progress" aria-hidden="true">
           <span
@@ -403,9 +481,7 @@ export function GesturePanel({
         <button
           type="button"
           className="secondary-button secondary-button--full"
-          onClick={() =>
-            setCalibration(calibration === "complete" ? "off" : "left")
-          }
+          onClick={handleCalibrationButton}
         >
           {calibration === "off"
             ? "Start calibration"

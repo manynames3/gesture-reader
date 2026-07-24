@@ -56,6 +56,11 @@ This personal-use build is intentionally not notarized or App Store signed.
 - Swipe left: next page
 - Swipe right: previous page
 
+For calibration, keep the full wrist and all five fingers inside the preview.
+Hold the open palm still until the palm lock reaches 3/3, then swipe. After the
+left check, move the hand out of view briefly and wait for Ready before raising
+it again for the right check.
+
 The gesture engine arms only after `Open_Palm` is detected with sufficient
 confidence in three of four frames. A swipe must cover the configured horizontal
 distance in 120–450 ms, exceed twice the vertical drift, and be followed by a

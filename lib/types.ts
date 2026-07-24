@@ -93,7 +93,13 @@ export type GestureStatus =
 export type GestureEvent =
   | { type: "status"; status: GestureStatus; message?: string }
   | { type: "gesture"; direction: "left" | "right"; confidence: number }
-  | { type: "metrics"; fps: number; confidence: number };
+  | {
+      type: "metrics";
+      fps: number;
+      confidence: number;
+      handPresent: boolean;
+      armProgress: number;
+    };
 
 export interface GestureEngine {
   start(settings: GestureSettings): Promise<void>;

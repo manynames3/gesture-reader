@@ -1367,7 +1367,15 @@ select:focus-visible {
 }
 
 .calibration-card strong {
+  display: block;
   font-size: 0.78rem;
+}
+
+.calibration-hint {
+  margin: 0.4rem 0 0;
+  color: #9b9e97;
+  font-size: 0.65rem;
+  line-height: 1.45;
 }
 
 .calibration-progress {

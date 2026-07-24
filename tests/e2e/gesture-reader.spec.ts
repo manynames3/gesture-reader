@@ -157,6 +157,13 @@ test.describe("Gesture Reader", () => {
         onmessage: ((event: MessageEvent) => void) | null;
       }> = [];
       const tracks: MediaStreamTrack[] = [];
+      let resetCount = 0;
+      let gestureFrame = {
+        confidence: 0,
+        state: "idle",
+        handPresent: false,
+        armProgress: 0,
+      };
 
       class GestureTestWorker {
         onmessage: ((event: MessageEvent) => void) | null = null;
@@ -198,11 +205,12 @@ test.describe("Gesture Reader", () => {
               new MessageEvent("message", {
                 data: {
                   type: "frameDone",
-                  confidence: 0.91,
-                  state: "armed",
+                  ...gestureFrame,
                 },
               }),
             );
+          } else if (request.type === "reset") {
+            resetCount += 1;
           }
         }
 
@@ -261,6 +269,9 @@ test.describe("Gesture Reader", () => {
 
       Object.assign(window, {
         __gestureTracks: tracks,
+        __gestureResetCount() {
+          return resetCount;
+        },
         __installGestureWorker() {
           Object.defineProperty(window, "Worker", {
             configurable: true,
@@ -276,6 +287,15 @@ test.describe("Gesture Reader", () => {
                 direction,
                 confidence: 0.94,
               },
+            }),
+          );
+        },
+        __setGestureFrame(next: typeof gestureFrame) {
+          gestureFrame = next;
+          const worker = workers.at(-1);
+          worker?.onmessage?.(
+            new MessageEvent("message", {
+              data: { type: "frameDone", ...gestureFrame },
             }),
           );
         },
@@ -301,11 +321,154 @@ test.describe("Gesture Reader", () => {
       page.getByRole("heading", { name: "Gesture setup" }),
     ).toBeVisible();
     await expect(
-      page.getByText(/Ready for an open palm|Palm detected — swipe/),
+      page.getByText(/Raise your open palm into view|Palm locked — swipe now/),
     ).toBeVisible();
     await expect(
       page.getByLabel("Camera", { exact: true }),
     ).toHaveValue("fake-desk-camera");
+
+    await page.getByRole("button", { name: "Start calibration" }).click();
+    await expect(
+      page.getByText("Raise your whole open palm into view"),
+    ).toBeVisible();
+    const resetCountAfterStart = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __gestureResetCount(): number;
+          }
+        ).__gestureResetCount(),
+    );
+    await page.getByRole("button", { name: "Restart" }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __gestureResetCount(): number;
+              }
+            ).__gestureResetCount(),
+        ),
+      )
+      .toBe(resetCountAfterStart + 1);
+
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __setGestureFrame(frame: {
+            confidence: number;
+            state: string;
+            handPresent: boolean;
+            armProgress: number;
+          }): void;
+        }
+      ).__setGestureFrame({
+        confidence: 0.55,
+        state: "idle",
+        handPresent: true,
+        armProgress: 0,
+      });
+    });
+    await expect(
+      page.getByText("Spread your fingers and hold still"),
+    ).toBeVisible();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __setGestureFrame(frame: {
+            confidence: number;
+            state: string;
+            handPresent: boolean;
+            armProgress: number;
+          }): void;
+        }
+      ).__setGestureFrame({
+        confidence: 0.91,
+        state: "armed",
+        handPresent: true,
+        armProgress: 3,
+      });
+    });
+    await expect(
+      page.getByText("Palm ready — swipe left"),
+    ).toBeVisible();
+
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("right");
+    });
+    await expect(
+      page.getByText(/A right swipe was detected/),
+    ).toBeVisible();
+    await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
+
+    await page.getByLabel("Reverse swipe direction").check();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("left");
+    });
+    await expect(
+      page.getByText("Palm ready — swipe right"),
+    ).toBeVisible();
+    await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
+
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __setGestureFrame(frame: {
+            confidence: number;
+            state: string;
+            handPresent: boolean;
+            armProgress: number;
+          }): void;
+        }
+      ).__setGestureFrame({
+        confidence: 0.91,
+        state: "cooldown",
+        handPresent: true,
+        armProgress: 3,
+      });
+    });
+    await expect(
+      page.getByText("Lower your hand briefly to reset"),
+    ).toBeVisible();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __setGestureFrame(frame: {
+            confidence: number;
+            state: string;
+            handPresent: boolean;
+            armProgress: number;
+          }): void;
+        }
+      ).__setGestureFrame({
+        confidence: 0.91,
+        state: "armed",
+        handPresent: true,
+        armProgress: 3,
+      });
+    });
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("right");
+    });
+    await expect(
+      page.getByText("Both directions are ready"),
+    ).toBeVisible();
+    await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Finish" }).click();
+    await page.getByLabel("Reverse swipe direction").uncheck();
 
     await page.evaluate(() => {
       (

@@ -9,7 +9,13 @@ import type {
 
 type WorkerResponse =
   | { type: "ready" }
-  | { type: "frameDone"; confidence: number; state: string }
+  | {
+      type: "frameDone";
+      confidence: number;
+      state: string;
+      handPresent: boolean;
+      armProgress: number;
+    }
   | {
       type: "gesture";
       direction: "left" | "right";
@@ -45,6 +51,8 @@ export class BrowserGestureEngine implements GestureEngine {
           type: "metrics",
           fps: this.frameTimes.length,
           confidence: message.confidence,
+          handPresent: message.handPresent,
+          armProgress: message.armProgress,
         });
         this.emit({
           type: "status",
