@@ -122,17 +122,70 @@ test.describe("Gesture Reader", () => {
       currentPage: 3,
       bookmarks: [3],
     });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open("gesture-reader");
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const transaction = request.result.transaction(
+              "documents",
+              "readwrite",
+            );
+            const store = transaction.objectStore("documents");
+            const records = store.getAll();
+            records.onerror = () => reject(records.error);
+            records.onsuccess = () => {
+              const record = records.result[0];
+              store.put({
+                ...record,
+                reading: {
+                  ...record.reading,
+                  zoom: "120000000000000%",
+                },
+              });
+            };
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+          };
+        }),
+    );
+    await page.reload();
     await page
       .getByRole("button", { name: `Open ${documentTitle}` })
       .click();
     await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await expect(viewer.locator("#scaleSelect")).toHaveValue("custom");
+    await expect(viewer.locator("#customScaleOption")).toContainText("120");
+    await expect(viewer.locator("#customScaleOption")).not.toContainText(
+      "120000",
+    );
     await expect(
       page.getByRole("button", {
         name: "Remove bookmark from current page",
       }),
     ).toBeVisible();
 
+    await page.waitForTimeout(700);
     await page.getByRole("button", { name: "Back to library" }).click();
+    const repairedZoom = await page.evaluate(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          const request = indexedDB.open("gesture-reader");
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const transaction = request.result.transaction(
+              "documents",
+              "readonly",
+            );
+            const records = transaction.objectStore("documents").getAll();
+            records.onerror = () => reject(records.error);
+            records.onsuccess = () =>
+              resolve(records.result[0].reading.zoom);
+          };
+        }),
+    );
+    expect(repairedZoom).toBe("1.2");
     await page
       .getByRole("button", {
         name: `Remove ${documentTitle} from library`,

@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PdfjsViewerElement } from "pdfjs-viewer-element";
+import {
+  normalizePdfZoom,
+  zoomFromPdfScaleEvent,
+} from "@/lib/pdf/zoom";
 import type { ReaderCommandBus } from "@/lib/reader/commandBus";
 import { pageTurnTarget } from "@/lib/reader/pageNavigation";
 import type {
@@ -116,8 +120,9 @@ export function PdfReader({
         Math.max(initialReadingRef.current.currentPage, 1),
         pageCount || 1,
       );
-      app.pdfViewer.currentScaleValue =
-        initialReadingRef.current.zoom || "page-width";
+      const zoom = normalizePdfZoom(initialReadingRef.current.zoom);
+      stateRef.current = { ...stateRef.current, zoom };
+      app.pdfViewer.currentScaleValue = zoom;
       app.pdfViewer.pagesRotation = initialReadingRef.current.rotation || 0;
       if (initialReadingRef.current.layout === "single") {
         app.pdfViewer.scrollMode = 3;
@@ -130,7 +135,7 @@ export function PdfReader({
         app.pdfViewer.spreadMode = 0;
       }
       app.pdfViewer.currentPageNumber = targetPage;
-      update({ pageCount, currentPage: targetPage });
+      update({ pageCount, currentPage: targetPage, zoom });
       setViewerReady(true);
       onReadyRef.current();
     }
@@ -215,11 +220,12 @@ export function PdfReader({
           restoreViewerState();
         });
         listen("scalechanging", (event) => {
-          const zoom =
-            typeof event.presetValue === "string"
-              ? event.presetValue
-              : `${Math.round(Number(event.scale ?? 1) * 100)}%`;
-          update({ zoom });
+          update({
+            zoom: zoomFromPdfScaleEvent(
+              event.presetValue,
+              event.scale,
+            ),
+          });
         });
         listen("rotationchanging", (event) => {
           const rotation = Number(event.pagesRotation);
