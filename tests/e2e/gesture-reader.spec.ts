@@ -1,0 +1,320 @@
+import { expect, test } from "@playwright/test";
+import { writePdfFixture } from "./pdfFixture";
+
+test.describe("Gesture Reader", () => {
+  let pdfPath: string;
+  const documentTitle = "Gesture Reader E2E Guide";
+
+  test.beforeAll(async ({}, testInfo) => {
+    pdfPath = await writePdfFixture(testInfo.project.outputDir);
+  });
+
+  test("imports, reads, searches, bookmarks, restores, and removes a PDF locally", async ({
+    page,
+  }) => {
+    const externalRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        !["localhost", "127.0.0.1"].includes(url.hostname) &&
+        !["blob:", "data:"].includes(url.protocol)
+      ) {
+        externalRequests.push(request.url());
+      }
+    });
+
+    await page.goto("/");
+    await expect(
+      page.getByRole("heading", {
+        name: "Turn the page. Keep your hands free.",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("Add a PDF to begin")).toBeVisible();
+    await page.locator('input[type="file"]').setInputFiles(pdfPath);
+    await expect(
+      page.getByRole("button", {
+        name: `Open ${documentTitle}`,
+      }),
+    ).toBeVisible();
+
+    await page.locator('input[type="file"]').setInputFiles(pdfPath);
+    await expect(
+      page.getByText("That PDF is already in your library."),
+    ).toBeVisible();
+
+    await page
+      .getByRole("button", { name: `Open ${documentTitle}` })
+      .click();
+    await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
+    const viewer = page.frameLocator("pdfjs-viewer-element iframe");
+    await expect(viewer.getByRole("button", { name: "Find" })).toBeVisible();
+    await expect(viewer.getByRole("button", { name: "Print" })).toBeVisible();
+    await expect(viewer.getByRole("button", { name: "Save" })).toBeVisible();
+    await expect(
+      viewer.getByText("Welcome to Gesture Reader"),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Next page" }).click();
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await page.waitForTimeout(400);
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await page.waitForTimeout(500);
+    await page.getByRole("button", { name: "Bookmark current page" }).click();
+    await expect(page.getByRole("button", { name: "1 saved" })).toBeVisible();
+    await page.waitForTimeout(200);
+
+    await page.getByRole("button", { name: "Back to library" }).click();
+    await expect(
+      page.getByRole("button", { name: `Open ${documentTitle}` }),
+    ).toBeVisible();
+    const storedReading = await page.evaluate(
+      () =>
+        new Promise<{ currentPage: number; bookmarks: number[] }>(
+          (resolve, reject) => {
+            const request = indexedDB.open("gesture-reader");
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+              const transaction = request.result.transaction(
+                "documents",
+                "readonly",
+              );
+              const records = transaction.objectStore("documents").getAll();
+              records.onerror = () => reject(records.error);
+              records.onsuccess = () =>
+                resolve(records.result[0].reading);
+            };
+          },
+        ),
+    );
+    expect(storedReading).toMatchObject({
+      currentPage: 3,
+      bookmarks: [3],
+    });
+    await page
+      .getByRole("button", { name: `Open ${documentTitle}` })
+      .click();
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Remove bookmark from current page",
+      }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Back to library" }).click();
+    await page
+      .getByRole("button", {
+        name: `Remove ${documentTitle} from library`,
+      })
+      .click();
+    await expect(
+      page.getByRole("dialog", { name: documentTitle }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Ready when you are" }),
+    ).toBeVisible();
+    expect(externalRequests).toEqual([]);
+  });
+
+  test("uses a fake local camera, turns exactly one page, and releases tracks", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const NativeWorker = window.Worker;
+      const workers: Array<{
+        onmessage: ((event: MessageEvent) => void) | null;
+      }> = [];
+      const tracks: MediaStreamTrack[] = [];
+
+      class GestureTestWorker {
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: ((event: ErrorEvent) => void) | null = null;
+        private gestureWorker: boolean;
+        private native?: Worker;
+
+        constructor(url: URL | string, options?: WorkerOptions) {
+          this.gestureWorker = String(url).includes("gesture.worker");
+          if (!this.gestureWorker) {
+            this.native = new NativeWorker(url, options);
+            this.native.onmessage = (event) => this.onmessage?.(event);
+            this.native.onerror = (event) => this.onerror?.(event);
+          } else {
+            workers.push(this);
+          }
+        }
+
+        postMessage(message: unknown, transfer?: Transferable[]) {
+          if (!this.gestureWorker) {
+            this.native?.postMessage(message, transfer ?? []);
+            return;
+          }
+          const request = message as {
+            type?: string;
+            bitmap?: ImageBitmap;
+          };
+          if (request.type === "initialize") {
+            setTimeout(
+              () =>
+                this.onmessage?.(
+                  new MessageEvent("message", { data: { type: "ready" } }),
+                ),
+              0,
+            );
+          } else if (request.type === "frame") {
+            request.bitmap?.close();
+            this.onmessage?.(
+              new MessageEvent("message", {
+                data: {
+                  type: "frameDone",
+                  confidence: 0.91,
+                  state: "armed",
+                },
+              }),
+            );
+          }
+        }
+
+        terminate() {
+          this.native?.terminate();
+        }
+
+        addEventListener() {}
+        removeEventListener() {}
+        dispatchEvent() {
+          return true;
+        }
+      }
+
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          async getUserMedia() {
+            const canvas = document.createElement("canvas");
+            canvas.width = 640;
+            canvas.height = 480;
+            const context = canvas.getContext("2d");
+            context?.fillRect(0, 0, canvas.width, canvas.height);
+            const stream = canvas.captureStream(20);
+            const track = stream.getVideoTracks()[0];
+            if (track) {
+              Object.defineProperty(track, "getSettings", {
+                configurable: true,
+                value: () => ({
+                  deviceId: "fake-desk-camera",
+                  width: 640,
+                  height: 480,
+                }),
+              });
+              tracks.push(track);
+            }
+            return stream;
+          },
+          async enumerateDevices() {
+            return [
+              {
+                deviceId: "fake-desk-camera",
+                groupId: "local",
+                kind: "videoinput",
+                label: "Fake desk camera",
+                toJSON() {
+                  return this;
+                },
+              },
+            ];
+          },
+          addEventListener() {},
+          removeEventListener() {},
+        },
+      });
+
+      Object.assign(window, {
+        __gestureTracks: tracks,
+        __installGestureWorker() {
+          Object.defineProperty(window, "Worker", {
+            configurable: true,
+            value: GestureTestWorker,
+          });
+        },
+        __emitGesture(direction: "left" | "right") {
+          const worker = workers.at(-1);
+          worker?.onmessage?.(
+            new MessageEvent("message", {
+              data: {
+                type: "gesture",
+                direction,
+                confidence: 0.94,
+              },
+            }),
+          );
+        },
+      });
+    });
+
+    await page.goto("/");
+    await expect(page.getByText("Add a PDF to begin")).toBeVisible();
+    await page.locator('input[type="file"]').setInputFiles(pdfPath);
+    await page
+      .getByRole("button", { name: `Open ${documentTitle}` })
+      .click();
+    await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __installGestureWorker(): void;
+        }
+      ).__installGestureWorker();
+    });
+    await page.getByRole("button", { name: "Enable gestures" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Gesture setup" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Ready for an open palm|Palm detected — swipe/),
+    ).toBeVisible();
+    await expect(
+      page.getByLabel("Camera", { exact: true }),
+    ).toHaveValue("fake-desk-camera");
+
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("left");
+    });
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("left");
+    });
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Gesture controls" }).click();
+    await expect(page.getByText("Camera active")).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        (
+          window as unknown as {
+            __gestureTracks: MediaStreamTrack[];
+          }
+        ).__gestureTracks.some((track) => track.readyState === "live"),
+      ),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Gesture controls" }).click();
+    await page.getByRole("button", { name: "Turn off gestures" }).click();
+    await expect(page.getByText("Camera active")).toBeHidden();
+    expect(
+      await page.evaluate(() =>
+        (
+          window as unknown as {
+            __gestureTracks: MediaStreamTrack[];
+          }
+        ).__gestureTracks.every((track) => track.readyState === "ended"),
+      ),
+    ).toBe(true);
+  });
+});
