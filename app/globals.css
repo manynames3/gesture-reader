@@ -948,6 +948,7 @@ select:focus-visible {
   position: relative;
   z-index: 30;
   display: grid;
+  grid-row: 1;
   min-height: 4.2rem;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
@@ -1075,6 +1076,7 @@ select:focus-visible {
   position: relative;
   z-index: 20;
   display: flex;
+  grid-row: 2;
   align-items: center;
   gap: 0.8rem;
   padding: 0.65rem 1rem;
@@ -1094,6 +1096,7 @@ select:focus-visible {
 
 .reader-workspace {
   display: grid;
+  grid-row: 3;
   min-height: 0;
   grid-template-columns: minmax(0, 1fr);
   transition: grid-template-columns 200ms ease;

@@ -5,6 +5,34 @@ test.describe("Gesture Reader", () => {
   let pdfPath: string;
   const documentTitle = "Gesture Reader E2E Guide";
 
+  async function expectWorkspaceFillsViewport(
+    page: import("@playwright/test").Page,
+    includeGesturePanel = false,
+  ) {
+    await expect
+      .poll(() =>
+        page.evaluate((checkPanel) => {
+          const workspace = document.querySelector(".reader-workspace");
+          const stage = document.querySelector(".pdf-stage");
+          const panel = checkPanel
+            ? document.querySelector(".gesture-panel")
+            : null;
+          if (!workspace || !stage || (checkPanel && !panel)) {
+            return Number.POSITIVE_INFINITY;
+          }
+          const bottoms = [
+            workspace.getBoundingClientRect().bottom,
+            stage.getBoundingClientRect().bottom,
+            ...(panel ? [panel.getBoundingClientRect().bottom] : []),
+          ];
+          return Math.max(
+            ...bottoms.map((bottom) => Math.abs(window.innerHeight - bottom)),
+          );
+        }, includeGesturePanel),
+      )
+      .toBeLessThanOrEqual(1);
+  }
+
   test.beforeAll(async ({}, testInfo) => {
     pdfPath = await writePdfFixture(testInfo.project.outputDir);
   });
@@ -53,6 +81,9 @@ test.describe("Gesture Reader", () => {
     await expect(
       viewer.getByText("Welcome to Gesture Reader"),
     ).toBeVisible();
+
+    await page.setViewportSize({ width: 1440, height: 1200 });
+    await expectWorkspaceFillsViewport(page);
 
     await page.getByRole("button", { name: "Next page" }).click();
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
@@ -284,6 +315,10 @@ test.describe("Gesture Reader", () => {
       ).__emitGesture("left");
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 1440, height: 1200 });
+    await expectWorkspaceFillsViewport(page, true);
+
     await page.evaluate(() => {
       (
         window as unknown as {
