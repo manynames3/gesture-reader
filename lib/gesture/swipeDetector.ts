@@ -20,6 +20,8 @@ export type SwipeDetectorState = "idle" | "armed" | "cooldown";
 interface SensitivityConfig {
   openPalmThreshold: number;
   displacement: number;
+  fastDisplacement?: number;
+  minFastAverageVelocity?: number;
   cooldown: number;
   minDuration: number;
   maxDuration: number;
@@ -46,6 +48,8 @@ const sensitivityConfig: Record<GestureSensitivity, SensitivityConfig> = {
   medium: {
     openPalmThreshold: 0.62,
     displacement: 0.14,
+    fastDisplacement: 0.1,
+    minFastAverageVelocity: 0.55,
     cooldown: 800,
     minDuration: 80,
     maxDuration: 650,
@@ -53,7 +57,7 @@ const sensitivityConfig: Record<GestureSensitivity, SensitivityConfig> = {
     minRecentVelocity: 0.14,
     trackingLease: 700,
     armRange: 0.06,
-    maxArmSpeed: 0.18,
+    maxArmSpeed: 0.22,
   },
   high: {
     openPalmThreshold: 0.55,
@@ -355,7 +359,18 @@ export class SwipeDetector {
 
     const dx = sample.x - first.x;
     const direction = Math.sign(dx);
-    if (direction === 0 || Math.abs(dx) < config.displacement) {
+    const absoluteDx = Math.abs(dx);
+    const averageVelocity =
+      duration > 0 ? absoluteDx / (duration / 1_000) : 0;
+    const reachesFastThreshold =
+      config.fastDisplacement !== undefined &&
+      config.minFastAverageVelocity !== undefined &&
+      absoluteDx >= config.fastDisplacement &&
+      averageVelocity >= config.minFastAverageVelocity;
+    if (
+      direction === 0 ||
+      (absoluteDx < config.displacement && !reachesFastThreshold)
+    ) {
       return undefined;
     }
 

@@ -214,7 +214,19 @@ test.describe("Gesture Reader", () => {
       let cameraRequestCount = 0;
       let holdCameraEnumeration = false;
       let releaseCameraEnumeration: (() => void) | undefined;
-      let gestureFrame = {
+      let gestureFrame: {
+        mode?: "palm" | "head";
+        confidence?: number;
+        state: string;
+        handPresent?: boolean;
+        armProgress?: number;
+        facePresent?: boolean;
+        rollDegrees?: number;
+        neutralRollDegrees?: number;
+        holdProgress?: number;
+        holdDirection?: "left" | "right";
+      } = {
+        mode: "palm",
         confidence: 0,
         state: "idle",
         handPresent: false,
@@ -247,7 +259,10 @@ test.describe("Gesture Reader", () => {
             type?: string;
             bitmap?: ImageBitmap;
           };
-          if (request.type === "initialize") {
+          if (
+            request.type === "initialize" ||
+            request.type === "settings"
+          ) {
             setTimeout(
               () =>
                 this.onmessage?.(
@@ -508,7 +523,7 @@ test.describe("Gesture Reader", () => {
     ).toBeVisible();
     await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
 
-    await page.getByLabel("Reverse swipe direction").check();
+    await page.getByLabel("Reverse page-turn direction").check();
     await page.evaluate(() => {
       (
         window as unknown as {
@@ -570,7 +585,7 @@ test.describe("Gesture Reader", () => {
     ).toBeVisible();
     await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Finish" }).click();
-    await page.getByLabel("Reverse swipe direction").uncheck();
+    await page.getByLabel("Reverse page-turn direction").uncheck();
 
     await page.evaluate(() => {
       (
@@ -580,6 +595,91 @@ test.describe("Gesture Reader", () => {
       ).__emitGesture("left");
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+
+    await page.waitForTimeout(350);
+    const cameraRequestsBeforeHeadMode = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __cameraRequestCount(): number;
+          }
+        ).__cameraRequestCount(),
+    );
+    await page.getByRole("button", { name: "Head tilt" }).click();
+    await expect(page.getByText("Center your face in view")).toBeVisible();
+    expect(
+      await page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __cameraRequestCount(): number;
+            }
+          ).__cameraRequestCount(),
+      ),
+    ).toBe(cameraRequestsBeforeHeadMode);
+
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __setGestureFrame(frame: {
+            mode: "head";
+            state: string;
+            facePresent: boolean;
+            rollDegrees: number;
+            neutralRollDegrees: number;
+            holdProgress: number;
+          }): void;
+        }
+      ).__setGestureFrame({
+        mode: "head",
+        state: "calibrating",
+        facePresent: true,
+        rollDegrees: 2,
+        neutralRollDegrees: 0,
+        holdProgress: 0.5,
+      });
+    });
+    await expect(page.getByText("Look straight ahead — 50%")).toBeVisible();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __setGestureFrame(frame: {
+            mode: "head";
+            state: string;
+            facePresent: boolean;
+            rollDegrees: number;
+            neutralRollDegrees: number;
+            holdProgress: number;
+            holdDirection: "left";
+          }): void;
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__setGestureFrame({
+        mode: "head",
+        state: "holding",
+        facePresent: true,
+        rollDegrees: -14,
+        neutralRollDegrees: 0,
+        holdProgress: 0.7,
+        holdDirection: "left",
+      });
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("left");
+    });
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await page.waitForTimeout(350);
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("right");
+    });
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Palm swipe" }).click();
 
     const requestCountBeforeDisconnect = await page.evaluate(
       () =>
@@ -722,5 +822,89 @@ test.describe("Gesture Reader", () => {
         ),
       )
       .toBe(true);
+  });
+
+  test("loads the bundled face model and processes local camera frames", async ({
+    page,
+  }) => {
+    test.slow();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          async getUserMedia() {
+            const canvas = document.createElement("canvas");
+            canvas.width = 640;
+            canvas.height = 480;
+            const context = canvas.getContext("2d");
+            if (context) {
+              context.fillStyle = "#161914";
+              context.fillRect(0, 0, canvas.width, canvas.height);
+              let frame = 0;
+              window.setInterval(() => {
+                frame += 1;
+                context.fillStyle =
+                  frame % 2 === 0 ? "#161914" : "#171a15";
+                context.fillRect(0, 0, canvas.width, canvas.height);
+              }, 50);
+            }
+            const stream = canvas.captureStream(20);
+            const track = stream.getVideoTracks()[0];
+            if (track) {
+              Object.defineProperty(track, "getSettings", {
+                configurable: true,
+                value: () => ({
+                  deviceId: "local-head-model-camera",
+                  width: 640,
+                  height: 480,
+                }),
+              });
+            }
+            return stream;
+          },
+          async enumerateDevices() {
+            return [
+              {
+                deviceId: "local-head-model-camera",
+                groupId: "local",
+                kind: "videoinput",
+                label: "Local head model camera",
+                toJSON() {
+                  return this;
+                },
+              },
+            ];
+          },
+          addEventListener() {},
+          removeEventListener() {},
+        },
+      });
+    });
+
+    await page.goto("/");
+    await expect(page.getByText("Add a PDF to begin")).toBeVisible();
+    await page.locator('input[type="file"]').setInputFiles(pdfPath);
+    await page
+      .getByRole("button", { name: `Open ${documentTitle}` })
+      .click();
+    await page.getByRole("button", { name: "Enable gestures" }).click();
+    await page.getByRole("button", { name: "Head tilt" }).click();
+
+    await expect(
+      page.getByText("Center your face in view"),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect
+      .poll(
+        async () => {
+          const text = await page
+            .locator(".gesture-metrics span")
+            .first()
+            .textContent();
+          return Number.parseInt(text ?? "0", 10);
+        },
+        { timeout: 20_000 },
+      )
+      .toBeGreaterThan(0);
+    await expect(page.getByText("Camera needs attention")).toBeHidden();
   });
 });

@@ -38,6 +38,7 @@ class FakeWorker {
 
 const settings: GestureSettings = {
   sensitivity: "medium",
+  mode: "palm",
   inverted: false,
   showPreview: true,
 };
@@ -118,6 +119,54 @@ describe("BrowserGestureEngine frame flow", () => {
       type: "status",
       status: "error",
       message: "model unavailable",
+    });
+  });
+
+  it("switches task modes with a fresh MediaPipe worker", async () => {
+    const engine = new BrowserGestureEngine();
+    const events: GestureEvent[] = [];
+    engine.subscribe((event) => events.push(event));
+    await engine.start(settings);
+    const worker = FakeWorker.instances[0];
+    worker.emit({ type: "ready" });
+
+    engine.updateMode("head");
+
+    const headWorker = FakeWorker.instances[1];
+    expect(FakeWorker.instances).toHaveLength(2);
+    expect(worker.terminated).toBe(true);
+    expect(engine.canAcceptFrame()).toBe(false);
+    expect(headWorker.messages.at(-1)).toEqual({
+      type: "initialize",
+      sensitivity: "medium",
+      mode: "head",
+    });
+    expect(events.at(-1)).toEqual({
+      type: "status",
+      status: "loading",
+    });
+
+    headWorker.emit({ type: "ready" });
+    headWorker.emit({
+      type: "frameDone",
+      mode: "head",
+      state: "holding",
+      facePresent: true,
+      rollDegrees: -14,
+      neutralRollDegrees: 1,
+      holdProgress: 0.6,
+      holdDirection: "left",
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: "metrics",
+      mode: "head",
+      status: "head",
+      facePresent: true,
+      rollDegrees: -14,
+      neutralRollDegrees: 1,
+      holdProgress: 0.6,
+      holdDirection: "left",
     });
   });
 });

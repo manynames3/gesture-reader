@@ -686,8 +686,9 @@ export function GestureReaderApp() {
           <p className="eyebrow">Your private reading desk</p>
           <h1>Turn the page.<br />Keep your hands free.</h1>
           <p>
-            Read, search, bookmark, and navigate PDFs with an open-palm swipe.
-            Your documents and camera frames never leave this device.
+            Read, search, bookmark, and navigate PDFs with an open-palm swipe
+            or a deliberate head tilt. Your documents and camera frames never
+            leave this device.
           </p>
           <div className="hero-actions">
             <button
@@ -875,7 +876,7 @@ export function GestureReaderApp() {
         )}
 
       <footer className="library-footer">
-        <span>Gesture Reader 1.0.5</span>
+        <span>Gesture Reader 1.1.0</span>
         <span>No account · No uploads · No telemetry</span>
       </footer>
 

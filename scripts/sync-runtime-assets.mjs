@@ -27,10 +27,21 @@ const modelPath = join(
   "models",
   "gesture-recognizer-float16-v1.task",
 );
+const faceModelPath = join(
+  publicRoot,
+  "vendor",
+  "mediapipe",
+  "models",
+  "face-landmarker-float16-v1.task",
+);
 const modelUrl =
   "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
+const faceModelUrl =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const modelSha256 =
   "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482";
+const faceModelSha256 =
+  "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff";
 
 async function copyDirectory(source, destination) {
   await rm(destination, { recursive: true, force: true });
@@ -43,6 +54,7 @@ await Promise.all([
   rm(join(publicRoot, "mediapipe"), { recursive: true, force: true }),
   mkdir(pdfRoot, { recursive: true }),
   mkdir(dirname(modelPath), { recursive: true }),
+  mkdir(dirname(faceModelPath), { recursive: true }),
 ]);
 await Promise.all([
   copyDirectory(
@@ -98,25 +110,39 @@ await Promise.all([
   ),
 ]);
 
-let modelBytes;
-try {
-  await access(modelPath);
-  modelBytes = new Uint8Array(await readFile(modelPath));
-} catch {
-  const response = await fetch(modelUrl);
-  if (!response.ok) {
-    throw new Error(
-      `Could not download the MediaPipe gesture model (${response.status}).`,
-    );
+async function ensureModel(path, url, expectedSha256, label) {
+  let bytes;
+  try {
+    await access(path);
+    bytes = new Uint8Array(await readFile(path));
+  } catch {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(
+        `Could not download the MediaPipe ${label} model (${response.status}).`,
+      );
+    }
+
+    bytes = new Uint8Array(await response.arrayBuffer());
+    const temporaryPath = `${path}.download`;
+    await writeFile(temporaryPath, bytes);
+    await rename(temporaryPath, path);
   }
 
-  modelBytes = new Uint8Array(await response.arrayBuffer());
-  const temporaryPath = `${modelPath}.download`;
-  await writeFile(temporaryPath, modelBytes);
-  await rename(temporaryPath, modelPath);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (digest !== expectedSha256) {
+    throw new Error(
+      `The MediaPipe ${label} model failed its integrity check.`,
+    );
+  }
 }
 
-const digest = createHash("sha256").update(modelBytes).digest("hex");
-if (digest !== modelSha256) {
-  throw new Error("The MediaPipe gesture model failed its integrity check.");
-}
+await Promise.all([
+  ensureModel(modelPath, modelUrl, modelSha256, "gesture"),
+  ensureModel(
+    faceModelPath,
+    faceModelUrl,
+    faceModelSha256,
+    "face landmarker",
+  ),
+]);

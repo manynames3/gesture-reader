@@ -127,6 +127,70 @@ describe("SwipeDetector real-world traces", () => {
     ]);
   });
 
+  it("recognizes a fast balanced swipe on its second motion frame at 15 and 20 FPS", () => {
+    for (const fps of [15, 20]) {
+      const interval = fps === 15 ? 67 : 50;
+      for (const direction of ["left", "right"] as const) {
+        const startX = direction === "left" ? 0.72 : 0.28;
+        const sign = direction === "left" ? -1 : 1;
+        const detector = new SwipeDetector("medium");
+        const detections = runDetailed(detector, [
+          palm(0, startX),
+          palm(interval, startX),
+          palm(interval * 2, startX),
+          palm(interval * 3, startX + sign * 0.05),
+          palm(interval * 4, startX + sign * 0.101),
+        ]);
+
+        expect(detections, `${direction} swipe at ${fps} FPS`).toEqual([
+          {
+            timestamp: interval * 4,
+            detection: expect.objectContaining({ direction }),
+          },
+        ]);
+      }
+    }
+  });
+
+  it("does not use the balanced fast path for slow horizontal repositioning", () => {
+    const detector = new SwipeDetector("medium");
+    const samples = [
+      palm(0, 0.72),
+      palm(65, 0.72),
+      palm(130, 0.72),
+      palm(230, 0.7),
+      palm(330, 0.68),
+      palm(430, 0.66),
+      palm(530, 0.64),
+      palm(630, 0.615),
+    ];
+
+    expect(runDetailed(detector, samples)).toHaveLength(0);
+    expect(detector.getState(630)).not.toBe("cooldown");
+  });
+
+  it("locks a balanced palm through realistic three-frame landmark jitter", () => {
+    const detector = new SwipeDetector("medium");
+    const samples = [
+      palm(0, 0.5, { y: 0.5 }),
+      palm(50, 0.521, { y: 0.519 }),
+      palm(100, 0.5, { y: 0.5 }),
+    ];
+
+    expect(runDetailed(detector, samples)).toHaveLength(0);
+    expect(detector.getArmProgress()).toBe(3);
+    expect(detector.getState(100)).toBe("armed");
+
+    expect(
+      runDetailed(detector, [
+        palm(150, 0.518, { y: 0.482 }),
+        palm(200, 0.482, { y: 0.518 }),
+        palm(250, 0.5, { y: 0.5 }),
+      ]),
+    ).toHaveLength(0);
+    expect(detector.getState(250)).not.toBe("cooldown");
+  });
+
   it("recognizes a deliberate 600 ms swipe instead of expiring at 450 ms", () => {
     const detector = new SwipeDetector("medium");
     const detections = run(detector, [

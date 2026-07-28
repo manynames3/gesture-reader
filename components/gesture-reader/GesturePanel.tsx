@@ -5,6 +5,7 @@ import { BrowserGestureEngine } from "@/lib/gesture/browserGestureEngine";
 import { openPalmThresholdForSensitivity } from "@/lib/gesture/swipeDetector";
 import type {
   GestureEvent,
+  GestureInputMode,
   GestureSensitivity,
   GestureStatus,
 } from "@/lib/types";
@@ -25,6 +26,7 @@ const statusCopy: Record<GestureStatus, string> = {
   loading: "Loading hand tracking",
   ready: "Ready for an open palm",
   hand: "Palm detected — swipe",
+  head: "Head tilt detected — hold",
   cooldown: "Page turned — reset your hand",
   paused: "Paused",
   error: "Camera needs attention",
@@ -68,6 +70,12 @@ export function GesturePanel({
       ? "medium"
       : loadPreference("gesture-reader:sensitivity", "medium"),
   );
+  const [inputMode, setInputMode] = useState<GestureInputMode>(() =>
+    typeof window === "undefined"
+      ? "palm"
+      : loadPreference("gesture-reader:input-mode", "palm"),
+  );
+  const modeRef = useRef<GestureInputMode>(inputMode);
   const [inverted, setInverted] = useState(() =>
     typeof window === "undefined"
       ? false
@@ -78,6 +86,16 @@ export function GesturePanel({
   const [confidence, setConfidence] = useState(0);
   const [handPresent, setHandPresent] = useState(false);
   const [armProgress, setArmProgress] = useState(0);
+  const [facePresent, setFacePresent] = useState(false);
+  const [rollDegrees, setRollDegrees] = useState(0);
+  const [neutralRollDegrees, setNeutralRollDegrees] = useState(0);
+  const [holdProgress, setHoldProgress] = useState(0);
+  const [holdDirection, setHoldDirection] = useState<
+    "left" | "right" | undefined
+  >();
+  const [headState, setHeadState] = useState<
+    "calibrating" | "ready" | "holding" | "cooldown"
+  >("calibrating");
   const [calibration, setCalibration] = useState<CalibrationStep>("off");
   const [calibrationFeedback, setCalibrationFeedback] = useState("");
 
@@ -121,18 +139,31 @@ export function GesturePanel({
         return;
       }
       if (event.type === "metrics") {
+        if (event.mode !== modeRef.current) return;
         lastEngineStatusRef.current = event.status;
         if (!pausedRef.current) setStatus(event.status);
         setFps(event.fps);
         setConfidence(event.confidence);
         setHandPresent(event.handPresent);
         setArmProgress(event.armProgress);
+        setFacePresent(event.facePresent);
+        setRollDegrees(event.rollDegrees);
+        setNeutralRollDegrees(event.neutralRollDegrees);
+        setHoldProgress(event.holdProgress);
+        setHoldDirection(event.holdDirection);
+        setHeadState(event.headState ?? "ready");
         return;
       }
 
       // A frame can finish after a modal opens, the page starts animating, or
       // the window loses focus. Never let that stale result turn a page.
       if (pausedRef.current) return;
+      if (
+        (modeRef.current === "palm" && event.source !== "palmSwipe") ||
+        (modeRef.current === "head" && event.source !== "headTilt")
+      ) {
+        return;
+      }
 
       const currentCalibration = calibrationRef.current;
       if (currentCalibration === "left") {
@@ -142,7 +173,9 @@ export function GesturePanel({
           setCalibrationFeedback("");
         } else {
           setCalibrationFeedback(
-            "A right swipe was detected. Move left as it appears in the mirrored preview.",
+            modeRef.current === "head"
+              ? "A right tilt was detected. Return to center, then tilt left as it appears in the mirrored preview."
+              : "A right swipe was detected. Move left as it appears in the mirrored preview.",
           );
         }
         return;
@@ -154,7 +187,9 @@ export function GesturePanel({
           setCalibrationFeedback("");
         } else {
           setCalibrationFeedback(
-            "A left swipe was detected. Move right as it appears in the mirrored preview.",
+            modeRef.current === "head"
+              ? "A left tilt was detected. Return to center, then tilt right as it appears in the mirrored preview."
+              : "A left swipe was detected. Move right as it appears in the mirrored preview.",
           );
         }
         return;
@@ -213,7 +248,7 @@ export function GesturePanel({
         !pausedRef.current &&
         document.visibilityState === "visible" &&
         frameId !== lastFrameId &&
-        timestamp - lastFrameAt >= 55
+        timestamp - lastFrameAt >= 50
       ) {
         try {
           const scale = Math.min(
@@ -336,6 +371,7 @@ export function GesturePanel({
         await engine.start({
           deviceId: activeId,
           sensitivity: sensitivityRef.current,
+          mode: modeRef.current,
           inverted: invertedRef.current,
           showPreview: true,
         });
@@ -462,49 +498,96 @@ export function GesturePanel({
 
   const openPalmThreshold = openPalmThresholdForSensitivity(sensitivity);
   const visibleStatus = paused && enabled ? "paused" : status;
+  const relativeRoll = rollDegrees - neutralRollDegrees;
+  const headDirection = holdDirection ?? (relativeRoll < 0 ? "left" : "right");
   const cameraStatus =
-    visibleStatus === "ready"
-      ? !handPresent
-        ? "Raise your open palm into view"
-        : confidence < openPalmThreshold
-          ? "Hand seen — spread your fingers"
-          : `Hold steady — ${armProgress}/3`
-      : visibleStatus === "hand"
-        ? "Palm locked — swipe now"
-        : statusCopy[visibleStatus];
+    inputMode === "head"
+      ? visibleStatus === "requesting" ||
+        visibleStatus === "loading" ||
+        visibleStatus === "paused" ||
+        visibleStatus === "error"
+        ? statusCopy[visibleStatus]
+        : visibleStatus === "cooldown"
+          ? "Page turned — return your head to center"
+          : visibleStatus === "head"
+            ? `Hold ${headDirection} — ${Math.round(holdProgress * 100)}%`
+            : !facePresent
+              ? "Center your face in view"
+              : headState === "calibrating"
+                ? `Look straight ahead — ${Math.round(holdProgress * 100)}%`
+                : "Centered — tilt left or right"
+      : visibleStatus === "ready"
+        ? !handPresent
+          ? "Raise your open palm into view"
+          : confidence < openPalmThreshold
+            ? "Hand seen — spread your fingers"
+            : `Hold steady — ${armProgress}/3`
+        : visibleStatus === "hand"
+          ? "Palm locked — swipe now"
+          : statusCopy[visibleStatus];
   const calibrationDirection =
     calibration === "left" || calibration === "right" ? calibration : null;
   const calibrationPrompt =
-    calibration === "off"
-      ? "Calibrate page turns"
-      : calibration === "complete"
-        ? "Both directions are ready"
-        : visibleStatus === "requesting" || visibleStatus === "loading"
-          ? "Starting on-device hand tracking"
-          : visibleStatus === "error"
-            ? "Camera needs attention"
-            : visibleStatus === "cooldown"
-              ? "Lower your hand briefly to reset"
-              : !handPresent
-                ? "Raise your whole open palm into view"
-                : confidence < openPalmThreshold
-                  ? "Spread your fingers and hold still"
-                  : visibleStatus !== "hand"
-                    ? `Hold still — palm lock ${armProgress}/3`
-                    : `Palm ready — swipe ${calibrationDirection}`;
+    inputMode === "head"
+      ? calibration === "off"
+        ? "Calibrate head tilts"
+        : calibration === "complete"
+          ? "Both directions are ready"
+          : visibleStatus === "requesting" || visibleStatus === "loading"
+            ? "Starting on-device face tracking"
+            : visibleStatus === "error"
+              ? "Camera needs attention"
+              : visibleStatus === "cooldown"
+                ? "Return your head to center"
+                : !facePresent
+                  ? "Center your face in the preview"
+                  : headState === "calibrating"
+                    ? "Look straight ahead while center is learned"
+                    : visibleStatus === "head"
+                      ? `Keep holding ${calibrationDirection} — ${Math.round(holdProgress * 100)}%`
+                      : `Centered — tilt your head ${calibrationDirection}`
+      : calibration === "off"
+        ? "Calibrate page turns"
+        : calibration === "complete"
+          ? "Both directions are ready"
+          : visibleStatus === "requesting" || visibleStatus === "loading"
+            ? "Starting on-device hand tracking"
+            : visibleStatus === "error"
+              ? "Camera needs attention"
+              : visibleStatus === "cooldown"
+                ? "Lower your hand briefly to reset"
+                : !handPresent
+                  ? "Raise your whole open palm into view"
+                  : confidence < openPalmThreshold
+                    ? "Spread your fingers and hold still"
+                    : visibleStatus !== "hand"
+                      ? `Hold still — palm lock ${armProgress}/3`
+                      : `Palm ready — swipe ${calibrationDirection}`;
   const calibrationHint =
     calibrationFeedback ||
-    (calibration === "off"
-      ? "Hold your palm still for a beat, then check one swipe in each direction."
-      : calibration === "complete"
-        ? "Calibration passed. Finish to enable page turns."
-        : visibleStatus === "cooldown"
-          ? "Move your hand out of the preview, wait for Ready, then raise it again."
-          : visibleStatus === "hand"
-            ? "Keep your palm facing the camera and move across about one fifth of the preview."
-            : handPresent
-              ? "Keep your wrist and all five fingers visible until the palm lock reaches 3/3."
-              : "Raise your hand above desk height so the full wrist and all five fingers are inside the preview.");
+    (inputMode === "head"
+      ? calibration === "off"
+        ? "The camera first learns your comfortable center, then checks one deliberate tilt each way."
+        : calibration === "complete"
+          ? "Calibration passed. Finish to enable page turns."
+          : visibleStatus === "cooldown"
+            ? "Come fully back to center and hold briefly before tilting the other way."
+            : visibleStatus === "head"
+              ? "Keep your shoulders relaxed and hold the tilt until the progress reaches 100%."
+              : facePresent
+                ? "Use a comfortable 12–15° tilt. You do not need to move your shoulders."
+                : "Keep your full face visible and look toward the screen."
+      : calibration === "off"
+        ? "Hold your palm still for a beat, then check one swipe in each direction."
+        : calibration === "complete"
+          ? "Calibration passed. Finish to enable page turns."
+          : visibleStatus === "cooldown"
+            ? "Move your hand out of the preview, wait for Ready, then raise it again."
+            : visibleStatus === "hand"
+              ? "Keep your palm facing the camera and move across about one fifth of the preview."
+              : handPresent
+                ? "Keep your wrist and all five fingers visible until the palm lock reaches 3/3."
+                : "Raise your hand above desk height so the full wrist and all five fingers are inside the preview.");
 
   function handleCalibrationButton() {
     if (calibration === "complete") {
@@ -521,7 +604,46 @@ export function GesturePanel({
     setConfidence(0);
     setHandPresent(false);
     setArmProgress(0);
+    setFacePresent(false);
+    setHoldProgress(0);
+    setHeadState("calibrating");
     engineRef.current?.reset();
+  }
+
+  function recenterHead() {
+    calibrationRef.current = "off";
+    setCalibration("off");
+    setCalibrationFeedback("");
+    setFacePresent(false);
+    setRollDegrees(0);
+    setNeutralRollDegrees(0);
+    setHoldProgress(0);
+    setHoldDirection(undefined);
+    setHeadState("calibrating");
+    engineRef.current?.reset();
+  }
+
+  function selectInputMode(mode: GestureInputMode) {
+    if (mode === inputMode) return;
+    localStorage.setItem(
+      "gesture-reader:input-mode",
+      JSON.stringify(mode),
+    );
+    modeRef.current = mode;
+    setInputMode(mode);
+    calibrationRef.current = "off";
+    setCalibration("off");
+    setCalibrationFeedback("");
+    setConfidence(0);
+    setHandPresent(false);
+    setArmProgress(0);
+    setFacePresent(false);
+    setRollDegrees(0);
+    setNeutralRollDegrees(0);
+    setHoldProgress(0);
+    setHoldDirection(undefined);
+    setHeadState("calibrating");
+    engineRef.current?.updateMode(mode);
   }
 
   return (
@@ -572,8 +694,20 @@ export function GesturePanel({
 
       <div className="gesture-metrics" aria-label="Gesture tracking metrics">
         <span>{fps || "—"} FPS</span>
-        <span>{Math.round(confidence * 100)}% open palm</span>
-        <span>{armProgress}/3 lock</span>
+        {inputMode === "head" ? (
+          <>
+            <span>
+              {relativeRoll >= 0 ? "+" : ""}
+              {relativeRoll.toFixed(1)}° tilt
+            </span>
+            <span>{Math.round(holdProgress * 100)}% hold</span>
+          </>
+        ) : (
+          <>
+            <span>{Math.round(confidence * 100)}% open palm</span>
+            <span>{armProgress}/3 lock</span>
+          </>
+        )}
       </div>
 
       <label className="field-label" htmlFor="camera-select">
@@ -592,6 +726,23 @@ export function GesturePanel({
           </option>
         ))}
       </select>
+
+      <fieldset className="sensitivity-control">
+        <legend>Control method</legend>
+        <div className="segmented-control segmented-control--two">
+          {(["palm", "head"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={inputMode === value ? "is-active" : ""}
+              onClick={() => selectInputMode(value)}
+              aria-pressed={inputMode === value}
+            >
+              {value === "palm" ? "Palm swipe" : "Head tilt"}
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       <fieldset className="sensitivity-control">
         <legend>Sensitivity</legend>
@@ -624,8 +775,17 @@ export function GesturePanel({
           checked={inverted}
           onChange={(event) => setInverted(event.target.checked)}
         />
-        Reverse swipe direction
+        Reverse page-turn direction
       </label>
+      {inputMode === "head" && (
+        <button
+          type="button"
+          className="secondary-button secondary-button--full recenter-button"
+          onClick={recenterHead}
+        >
+          Recenter head position
+        </button>
+      )}
 
       <div className="calibration-card">
         <div>
@@ -657,8 +817,8 @@ export function GesturePanel({
       </div>
 
       <p className="privacy-note">
-        Video frames stay in memory on this device. Nothing is recorded or sent
-        to a server.
+        Video frames and landmarks stay in memory on this device. Nothing is
+        recorded or sent to a server.
       </p>
     </aside>
   );
