@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserGestureEngine } from "@/lib/gesture/browserGestureEngine";
-import { OPEN_PALM_THRESHOLD } from "@/lib/gesture/swipeDetector";
+import { openPalmThresholdForSensitivity } from "@/lib/gesture/swipeDetector";
 import type {
   GestureEvent,
   GestureSensitivity,
@@ -51,6 +51,8 @@ export function GesturePanel({
   const calibrationRef = useRef<CalibrationStep>("off");
   const pausedRef = useRef(paused);
   const externalPausedRef = useRef(paused);
+  const windowFocusedRef = useRef(true);
+  const lastEngineStatusRef = useRef<GestureStatus>("off");
   const sensitivityRef = useRef<GestureSensitivity>("medium");
   const invertedRef = useRef(false);
   const onDisableRef = useRef(onDisable);
@@ -59,6 +61,8 @@ export function GesturePanel({
   const [statusMessage, setStatusMessage] = useState("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState("");
+  const [activeDeviceId, setActiveDeviceId] = useState("");
+  const [cameraGeneration, setCameraGeneration] = useState(0);
   const [sensitivity, setSensitivity] = useState<GestureSensitivity>(() =>
     typeof window === "undefined"
       ? "medium"
@@ -79,7 +83,7 @@ export function GesturePanel({
 
   useEffect(() => {
     externalPausedRef.current = paused;
-    pausedRef.current = paused;
+    pausedRef.current = paused || !windowFocusedRef.current;
   }, [paused]);
 
   useEffect(() => {
@@ -111,11 +115,13 @@ export function GesturePanel({
   const handleEngineEvent = useCallback(
     (event: GestureEvent) => {
       if (event.type === "status") {
+        lastEngineStatusRef.current = event.status;
         if (!pausedRef.current) setStatus(event.status);
         setStatusMessage(event.message ?? "");
         return;
       }
       if (event.type === "metrics") {
+        lastEngineStatusRef.current = event.status;
         if (!pausedRef.current) setStatus(event.status);
         setFps(event.fps);
         setConfidence(event.confidence);
@@ -123,6 +129,10 @@ export function GesturePanel({
         setArmProgress(event.armProgress);
         return;
       }
+
+      // A frame can finish after a modal opens, the page starts animating, or
+      // the window loses focus. Never let that stale result turn a page.
+      if (pausedRef.current) return;
 
       const currentCalibration = calibrationRef.current;
       if (currentCalibration === "left") {
@@ -165,52 +175,127 @@ export function GesturePanel({
     if (!enabled) return;
 
     let cancelled = false;
+    let failed = false;
+    let restartRequested = false;
     let animationFrame = 0;
+    let videoFrameCallback = 0;
     let stream: MediaStream | undefined;
+    let activeTrack: MediaStreamTrack | undefined;
+    let currentStreamDeviceId = "";
     let lastFrameAt = 0;
+    let lastFrameId: number | undefined;
     const engine = new BrowserGestureEngine();
     const preview = videoRef.current;
     engineRef.current = engine;
     const unsubscribe = engine.subscribe(handleEngineEvent);
 
-    async function runFrameLoop() {
+    function fallbackFrameId(video: HTMLVideoElement) {
+      const qualityFrames =
+        video.getVideoPlaybackQuality?.().totalVideoFrames;
+      if (qualityFrames && qualityFrames > 0) return qualityFrames;
+      const decodedFrames = (
+        video as HTMLVideoElement & {
+          webkitDecodedFrameCount?: number;
+        }
+      ).webkitDecodedFrameCount;
+      return decodedFrames && decodedFrames > 0
+        ? decodedFrames
+        : video.currentTime;
+    }
+
+    async function processVideoFrame(frameId: number, timestamp: number) {
       if (cancelled) return;
       const video = preview;
-      const now = performance.now();
       if (
         video &&
         video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        engine.canAcceptFrame() &&
         !pausedRef.current &&
         document.visibilityState === "visible" &&
-        now - lastFrameAt >= 55
+        frameId !== lastFrameId &&
+        timestamp - lastFrameAt >= 55
       ) {
-        lastFrameAt = now;
         try {
+          const scale = Math.min(
+            1,
+            640 / Math.max(1, video.videoWidth),
+            480 / Math.max(1, video.videoHeight),
+          );
           const bitmap = await createImageBitmap(video, {
-            resizeWidth: 640,
-            resizeHeight: 480,
-            resizeQuality: "low",
+            resizeWidth: Math.max(1, Math.round(video.videoWidth * scale)),
+            resizeHeight: Math.max(1, Math.round(video.videoHeight * scale)),
+            resizeQuality: "medium",
           });
-          engine.submitFrame(bitmap, now);
+          if (cancelled) {
+            bitmap.close();
+            return;
+          }
+          if (engine.submitFrame(bitmap, timestamp)) {
+            lastFrameAt = timestamp;
+            lastFrameId = frameId;
+          }
         } catch {
           try {
             const bitmap = await createImageBitmap(video);
-            engine.submitFrame(bitmap, now);
+            if (cancelled) {
+              bitmap.close();
+              return;
+            }
+            if (engine.submitFrame(bitmap, timestamp)) {
+              lastFrameAt = timestamp;
+              lastFrameId = frameId;
+            }
           } catch {
-            setStatus("error");
-            setStatusMessage(
-              "This browser cannot pass camera frames to on-device hand tracking.",
-            );
+            if (!cancelled) {
+              lastEngineStatusRef.current = "error";
+              setStatus("error");
+              setStatusMessage(
+                "This browser cannot pass camera frames to on-device hand tracking.",
+              );
+            }
           }
         }
       }
-      animationFrame = requestAnimationFrame(runFrameLoop);
+    }
+
+    function scheduleFrameCapture() {
+      if (cancelled || !preview) return;
+      if (typeof preview.requestVideoFrameCallback === "function") {
+        videoFrameCallback = preview.requestVideoFrameCallback(
+          (timestamp, metadata) => {
+            void processVideoFrame(
+              metadata.presentedFrames,
+              timestamp,
+            ).finally(scheduleFrameCapture);
+          },
+        );
+        return;
+      }
+      animationFrame = requestAnimationFrame((timestamp) => {
+        void processVideoFrame(
+          fallbackFrameId(preview),
+          timestamp,
+        ).finally(scheduleFrameCapture);
+      });
+    }
+
+    async function discardStaleStart() {
+      activeTrack?.removeEventListener("ended", handleTrackEnded);
+      stream?.getTracks().forEach((track) => track.stop());
+      if (preview && preview.srcObject === stream) preview.srcObject = null;
+      await engine.stop();
     }
 
     async function start() {
       try {
+        lastEngineStatusRef.current = "requesting";
         setStatus("requesting");
         setStatusMessage("");
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error(
+            "Camera access is unavailable here. Open Gesture Reader over HTTPS or use the macOS app.",
+          );
+        }
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -221,7 +306,7 @@ export function GesturePanel({
           },
         });
         if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
+          await discardStaleStart();
           return;
         }
 
@@ -229,23 +314,48 @@ export function GesturePanel({
         if (!video) throw new Error("The camera preview is unavailable.");
         video.srcObject = stream;
         await video.play();
-        const availableDevices = await navigator.mediaDevices.enumerateDevices();
+        if (cancelled) {
+          await discardStaleStart();
+          return;
+        }
+        const availableDevices =
+          await navigator.mediaDevices.enumerateDevices().catch(() => []);
+        if (cancelled) {
+          await discardStaleStart();
+          return;
+        }
         const cameras = availableDevices.filter(
           (device) => device.kind === "videoinput",
         );
         setDevices(cameras);
-        const activeId = stream.getVideoTracks()[0]?.getSettings().deviceId;
-        if (!deviceId && activeId) setDeviceId(activeId);
+        activeTrack = stream.getVideoTracks()[0];
+        const activeId = activeTrack?.getSettings().deviceId;
+        currentStreamDeviceId = activeId ?? deviceId;
+        setActiveDeviceId(activeId ?? deviceId);
+        activeTrack?.addEventListener("ended", handleTrackEnded);
         await engine.start({
           deviceId: activeId,
           sensitivity: sensitivityRef.current,
           inverted: invertedRef.current,
           showPreview: true,
         });
-        animationFrame = requestAnimationFrame(runFrameLoop);
+        if (cancelled) {
+          await discardStaleStart();
+          return;
+        }
+        scheduleFrameCapture();
       } catch (error) {
+        failed = true;
+        activeTrack?.removeEventListener("ended", handleTrackEnded);
+        stream?.getTracks().forEach((track) => track.stop());
+        if (preview && preview.srcObject === stream) {
+          preview.srcObject = null;
+        }
+        await engine.stop();
+        if (cancelled) return;
         const denied =
           error instanceof DOMException && error.name === "NotAllowedError";
+        lastEngineStatusRef.current = "error";
         setStatus("error");
         setStatusMessage(
           denied
@@ -261,50 +371,102 @@ export function GesturePanel({
       if (document.visibilityState === "hidden") onDisableRef.current();
     }
     function handleBlur() {
+      windowFocusedRef.current = false;
       pausedRef.current = true;
       setStatus("paused");
     }
     function handleFocus() {
+      windowFocusedRef.current = true;
       pausedRef.current = externalPausedRef.current;
-      if (!externalPausedRef.current) setStatus("ready");
+      if (!externalPausedRef.current) {
+        setStatus(lastEngineStatusRef.current);
+      }
+    }
+    function requestCameraFallback() {
+      if (cancelled || failed || restartRequested) return;
+      restartRequested = true;
+      setActiveDeviceId("");
+      setStatusMessage(
+        "The active camera disconnected. Switching to the default camera.",
+      );
+      if (deviceId) {
+        setDeviceId("");
+      } else {
+        setCameraGeneration((current) => current + 1);
+      }
+    }
+    function handleTrackEnded() {
+      requestCameraFallback();
     }
     async function refreshDevices() {
-      const available = await navigator.mediaDevices.enumerateDevices();
-      setDevices(
-        available.filter((device) => device.kind === "videoinput"),
+      let available: MediaDeviceInfo[];
+      try {
+        available = await navigator.mediaDevices.enumerateDevices();
+      } catch {
+        if (!cancelled && !failed) {
+          setStatusMessage(
+            "The camera list could not be refreshed. The active camera is still connected.",
+          );
+        }
+        return;
+      }
+      if (cancelled || failed) return;
+      const cameras = available.filter(
+        (device) => device.kind === "videoinput",
       );
+      setDevices(cameras);
+      if (
+        currentStreamDeviceId &&
+        !cameras.some(
+          (device) => device.deviceId === currentStreamDeviceId,
+        )
+      ) {
+        requestCameraFallback();
+      }
     }
 
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("blur", handleBlur);
     window.addEventListener("focus", handleFocus);
-    navigator.mediaDevices.addEventListener?.("devicechange", refreshDevices);
+    navigator.mediaDevices?.addEventListener?.(
+      "devicechange",
+      refreshDevices,
+    );
     void start();
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(animationFrame);
+      if (
+        preview &&
+        videoFrameCallback &&
+        typeof preview.cancelVideoFrameCallback === "function"
+      ) {
+        preview.cancelVideoFrameCallback(videoFrameCallback);
+      }
       unsubscribe();
+      activeTrack?.removeEventListener("ended", handleTrackEnded);
       void engine.stop();
       stream?.getTracks().forEach((track) => track.stop());
-      if (preview) preview.srcObject = null;
+      if (preview && preview.srcObject === stream) preview.srcObject = null;
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("blur", handleBlur);
       window.removeEventListener("focus", handleFocus);
-      navigator.mediaDevices.removeEventListener?.(
+      navigator.mediaDevices?.removeEventListener?.(
         "devicechange",
         refreshDevices,
       );
       if (engineRef.current === engine) engineRef.current = null;
     };
-  }, [deviceId, enabled, handleEngineEvent]);
+  }, [cameraGeneration, deviceId, enabled, handleEngineEvent]);
 
+  const openPalmThreshold = openPalmThresholdForSensitivity(sensitivity);
   const visibleStatus = paused && enabled ? "paused" : status;
   const cameraStatus =
     visibleStatus === "ready"
       ? !handPresent
         ? "Raise your open palm into view"
-        : confidence < OPEN_PALM_THRESHOLD
+        : confidence < openPalmThreshold
           ? "Hand seen — spread your fingers"
           : `Hold steady — ${armProgress}/3`
       : visibleStatus === "hand"
@@ -325,7 +487,7 @@ export function GesturePanel({
               ? "Lower your hand briefly to reset"
               : !handPresent
                 ? "Raise your whole open palm into view"
-                : confidence < OPEN_PALM_THRESHOLD
+                : confidence < openPalmThreshold
                   ? "Spread your fingers and hold still"
                   : visibleStatus !== "hand"
                     ? `Hold still — palm lock ${armProgress}/3`
@@ -339,7 +501,7 @@ export function GesturePanel({
         : visibleStatus === "cooldown"
           ? "Move your hand out of the preview, wait for Ready, then raise it again."
           : visibleStatus === "hand"
-            ? "Keep your palm facing the camera and move across about one quarter of the preview."
+            ? "Keep your palm facing the camera and move across about one fifth of the preview."
             : handPresent
               ? "Keep your wrist and all five fingers visible until the palm lock reaches 3/3."
               : "Raise your hand above desk height so the full wrist and all five fingers are inside the preview.");
@@ -419,7 +581,7 @@ export function GesturePanel({
       </label>
       <select
         id="camera-select"
-        value={deviceId}
+        value={deviceId || activeDeviceId}
         onChange={(event) => setDeviceId(event.target.value)}
         disabled={devices.length === 0}
       >

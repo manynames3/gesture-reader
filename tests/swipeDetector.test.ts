@@ -11,8 +11,17 @@ function palm(
   confidence = 0.9,
   open = true,
   handPresent = open,
+  palmExtended = open,
 ): PalmSample {
-  return { timestamp, x, y, confidence, open, handPresent };
+  return {
+    timestamp,
+    x,
+    y,
+    confidence,
+    open,
+    handPresent,
+    palmExtended,
+  };
 }
 
 function run(detector: SwipeDetector, samples: PalmSample[]) {
@@ -79,10 +88,10 @@ describe("SwipeDetector", () => {
       palm(240, 0.49, 0.58),
     ]);
     const lowConfidence = run(new SwipeDetector(), [
-      palm(0, 0.72, 0.5, 0.69),
-      palm(50, 0.72, 0.5, 0.69),
-      palm(100, 0.72, 0.5, 0.69),
-      palm(220, 0.4, 0.5, 0.69),
+      palm(0, 0.72, 0.5, 0.6),
+      palm(50, 0.72, 0.5, 0.6),
+      palm(100, 0.72, 0.5, 0.6),
+      palm(220, 0.4, 0.5, 0.6),
     ]);
 
     expect(jitter).toHaveLength(0);
@@ -90,7 +99,7 @@ describe("SwipeDetector", () => {
     expect(lowConfidence).toHaveLength(0);
   });
 
-  it("rejects movement outside the 120–450 ms window and resets on a lost hand", () => {
+  it("rejects incomplete motion and resets after two lost-hand frames", () => {
     const tooFast = run(new SwipeDetector(), [
       palm(0, 0.72),
       palm(20, 0.72),
@@ -127,6 +136,7 @@ describe("SwipeDetector", () => {
       palm(150, 0.65, 0.5, 0, false),
       palm(220, 0.58),
       palm(280, 0.49),
+      palm(340, 0.4),
     ]);
 
     expect(detections).toEqual([
@@ -140,8 +150,8 @@ describe("SwipeDetector", () => {
       palm(0, 0.72),
       palm(50, 0.72),
       palm(100, 0.72),
-      palm(165, 0.6, 0.5, 0.45, false, true),
-      palm(235, 0.48, 0.5, 0.4, false, true),
+      palm(165, 0.6, 0.5, 0, false, true, true),
+      palm(235, 0.48, 0.5, 0, false, true, true),
     ]);
 
     expect(detections).toEqual([

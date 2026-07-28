@@ -6,6 +6,7 @@ import {
   type GestureRecognizerResult,
 } from "@mediapipe/tasks-vision";
 import type { GestureSensitivity } from "@/lib/types";
+import { palmLandmarksAreExtended } from "./palmGeometry";
 import { SwipeDetector } from "./swipeDetector";
 
 type WorkerRequest =
@@ -52,6 +53,10 @@ function assetUrl(path: string) {
   return new URL(path, self.location.href).href;
 }
 
+function clampUnit(value: number) {
+  return Math.min(1, Math.max(0, value));
+}
+
 function extractPalm(result: GestureRecognizerResult, timestamp: number) {
   const gesture = result.gestures[0]?.find(
     (candidate) => candidate.categoryName === "Open_Palm",
@@ -67,6 +72,7 @@ function extractPalm(result: GestureRecognizerResult, timestamp: number) {
       confidence: 0,
       open: false,
       handPresent: false,
+      palmExtended: false,
     };
   }
 
@@ -78,14 +84,16 @@ function extractPalm(result: GestureRecognizerResult, timestamp: number) {
     }),
     { x: 0, y: 0 },
   );
-
   return {
     timestamp,
-    x: 1 - palm.x / palmIndices.length,
-    y: palm.y / palmIndices.length,
+    x: clampUnit(1 - palm.x / palmIndices.length),
+    y: clampUnit(palm.y / palmIndices.length),
     confidence,
     open,
     handPresent: true,
+    // The classifier is the only signal allowed to arm. Once armed, landmark
+    // geometry distinguishes an extended palm under motion blur from a fist.
+    palmExtended: palmLandmarksAreExtended(landmarks),
   };
 }
 
@@ -105,14 +113,14 @@ async function initialize(sensitivity: GestureSensitivity) {
     canvas: new OffscreenCanvas(640, 480),
     runningMode: "VIDEO",
     numHands: 1,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    minHandDetectionConfidence: 0.45,
+    minHandPresenceConfidence: 0.4,
+    minTrackingConfidence: 0.35,
     cannedGesturesClassifierOptions: {
       categoryAllowlist: ["Open_Palm"],
       // Return the score even below the activation threshold so setup can
-      // explain why a visible hand has not armed yet. SwipeDetector still
-      // requires confidence >= 0.70.
+      // explain why a visible hand has not armed yet. SwipeDetector applies
+      // the threshold selected by Steady, Balanced, or Quick mode.
       scoreThreshold: 0,
       maxResults: 1,
     },

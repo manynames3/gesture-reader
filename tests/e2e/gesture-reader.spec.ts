@@ -211,6 +211,9 @@ test.describe("Gesture Reader", () => {
       }> = [];
       const tracks: MediaStreamTrack[] = [];
       let resetCount = 0;
+      let cameraRequestCount = 0;
+      let holdCameraEnumeration = false;
+      let releaseCameraEnumeration: (() => void) | undefined;
       let gestureFrame = {
         confidence: 0,
         state: "idle",
@@ -282,6 +285,7 @@ test.describe("Gesture Reader", () => {
         configurable: true,
         value: {
           async getUserMedia() {
+            cameraRequestCount += 1;
             const canvas = document.createElement("canvas");
             canvas.width = 640;
             canvas.height = 480;
@@ -303,6 +307,11 @@ test.describe("Gesture Reader", () => {
             return stream;
           },
           async enumerateDevices() {
+            if (holdCameraEnumeration) {
+              await new Promise<void>((resolve) => {
+                releaseCameraEnumeration = resolve;
+              });
+            }
             return [
               {
                 deviceId: "fake-desk-camera",
@@ -325,6 +334,22 @@ test.describe("Gesture Reader", () => {
         __gestureResetCount() {
           return resetCount;
         },
+        __cameraRequestCount() {
+          return cameraRequestCount;
+        },
+        __disconnectGestureCamera() {
+          const track = tracks.at(-1);
+          track?.stop();
+          track?.dispatchEvent(new Event("ended"));
+        },
+        __holdCameraEnumeration() {
+          holdCameraEnumeration = true;
+        },
+        __releaseCameraEnumeration() {
+          holdCameraEnumeration = false;
+          releaseCameraEnumeration?.();
+          releaseCameraEnumeration = undefined;
+        },
         __installGestureWorker() {
           Object.defineProperty(window, "Worker", {
             configurable: true,
@@ -339,6 +364,17 @@ test.describe("Gesture Reader", () => {
                 type: "gesture",
                 direction,
                 confidence: 0.94,
+              },
+            }),
+          );
+        },
+        __emitGestureWorkerError() {
+          const worker = workers.at(-1);
+          worker?.onmessage?.(
+            new MessageEvent("message", {
+              data: {
+                type: "error",
+                message: "Synthetic hand-tracking failure",
               },
             }),
           );
@@ -379,6 +415,16 @@ test.describe("Gesture Reader", () => {
     await expect(
       page.getByLabel("Camera", { exact: true }),
     ).toHaveValue("fake-desk-camera");
+    expect(
+      await page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __cameraRequestCount(): number;
+            }
+          ).__cameraRequestCount(),
+      ),
+    ).toBe(1);
 
     await page.getByRole("button", { name: "Start calibration" }).click();
     await expect(
@@ -535,6 +581,47 @@ test.describe("Gesture Reader", () => {
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
 
+    const requestCountBeforeDisconnect = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __cameraRequestCount(): number;
+          }
+        ).__cameraRequestCount(),
+    );
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __disconnectGestureCamera(): void;
+        }
+      ).__disconnectGestureCamera();
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __cameraRequestCount(): number;
+              }
+            ).__cameraRequestCount(),
+        ),
+      )
+      .toBe(requestCountBeforeDisconnect + 1);
+    await expect(page.getByText("Camera active")).toBeVisible();
+
+    await page.getByRole("button", { name: "0 saved" }).click();
+    await expect(page.getByText("Page bookmarks")).toBeVisible();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __emitGesture(direction: "left" | "right"): void;
+        }
+      ).__emitGesture("left");
+    });
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "0 saved" }).click();
+
     await page.setViewportSize({ width: 1440, height: 1200 });
     await expectWorkspaceFillsViewport(page, true);
 
@@ -546,6 +633,22 @@ test.describe("Gesture Reader", () => {
       ).__emitGesture("left");
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await expect(page.locator(".camera-frame__status")).not.toContainText(
+      "Paused",
+    );
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("blur"));
+      (
+        window as unknown as {
+          __emitGestureWorkerError(): void;
+        }
+      ).__emitGestureWorkerError();
+      window.dispatchEvent(new Event("focus"));
+    });
+    await expect(
+      page.getByText("Camera needs attention").first(),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Gesture controls" }).click();
     await expect(page.getByText("Camera active")).toBeVisible();
@@ -570,5 +673,54 @@ test.describe("Gesture Reader", () => {
         ).__gestureTracks.every((track) => track.readyState === "ended"),
       ),
     ).toBe(true);
+
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __holdCameraEnumeration(): void;
+        }
+      ).__holdCameraEnumeration();
+    });
+    const requestsBeforeCancelledStart = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __cameraRequestCount(): number;
+          }
+        ).__cameraRequestCount(),
+    );
+    await page.getByRole("button", { name: "Enable gestures" }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __cameraRequestCount(): number;
+              }
+            ).__cameraRequestCount(),
+        ),
+      )
+      .toBe(requestsBeforeCancelledStart + 1);
+    await page.getByRole("button", { name: "Turn off gestures" }).click();
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __releaseCameraEnumeration(): void;
+        }
+      ).__releaseCameraEnumeration();
+    });
+    await expect(page.getByText("Camera active")).toBeHidden();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (
+            window as unknown as {
+              __gestureTracks: MediaStreamTrack[];
+            }
+          ).__gestureTracks.every((track) => track.readyState === "ended"),
+        ),
+      )
+      .toBe(true);
   });
 });

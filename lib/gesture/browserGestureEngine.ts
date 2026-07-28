@@ -31,13 +31,17 @@ export class BrowserGestureEngine implements GestureEngine {
   private frameTimes: number[] = [];
 
   async start(settings: GestureSettings): Promise<void> {
-    await this.stop();
+    // stop() performs its teardown synchronously; do not yield here or a
+    // concurrent stop could be followed by this start resurrecting a worker.
+    void this.stop();
     this.emit({ type: "status", status: "loading" });
-    this.worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), {
+    const worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), {
       type: "module",
       name: "gesture-reader-hand-tracking",
     });
-    this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+    this.worker = worker;
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      if (this.worker !== worker) return;
       const message = event.data;
       if (message.type === "ready") {
         this.ready = true;
@@ -74,50 +78,83 @@ export class BrowserGestureEngine implements GestureEngine {
       } else if (message.type === "gesture") {
         this.emit(message);
       } else if (message.type === "error") {
-        this.frameInFlight = false;
-        this.emit({
-          type: "status",
-          status: "error",
-          message: message.message,
-        });
+        this.fail(message.message, worker);
       }
     };
-    this.worker.onerror = () => {
-      this.emit({
-        type: "status",
-        status: "error",
-        message:
-          "This browser could not start on-device hand tracking. Manual controls still work.",
-      });
+    worker.onerror = () => {
+      this.fail(
+        "This browser could not start on-device hand tracking. Manual controls still work.",
+        worker,
+      );
     };
-    this.worker.postMessage({
-      type: "initialize",
-      sensitivity: settings.sensitivity,
-    });
+    try {
+      worker.postMessage({
+        type: "initialize",
+        sensitivity: settings.sensitivity,
+      });
+    } catch {
+      const message =
+        "This browser could not start on-device hand tracking. Manual controls still work.";
+      this.fail(message, worker);
+      throw new Error(message);
+    }
   }
 
   updateSensitivity(sensitivity: GestureSensitivity) {
-    this.worker?.postMessage({ type: "settings", sensitivity });
+    const worker = this.worker;
+    if (!worker) return;
+    try {
+      worker.postMessage({ type: "settings", sensitivity });
+    } catch {
+      this.fail("Hand tracking stopped unexpectedly.", worker);
+    }
+  }
+
+  canAcceptFrame() {
+    return Boolean(this.worker && this.ready && !this.frameInFlight);
   }
 
   submitFrame(bitmap: ImageBitmap, timestamp: number): boolean {
-    if (!this.worker || !this.ready || this.frameInFlight) {
+    const worker = this.worker;
+    if (!this.canAcceptFrame() || !worker) {
       bitmap.close();
       return false;
     }
     this.frameInFlight = true;
-    this.worker.postMessage({ type: "frame", bitmap, timestamp }, [bitmap]);
-    return true;
+    try {
+      worker.postMessage({ type: "frame", bitmap, timestamp }, [bitmap]);
+      return true;
+    } catch {
+      this.frameInFlight = false;
+      try {
+        bitmap.close();
+      } catch {
+        // The browser may have transferred ownership before throwing.
+      }
+      this.fail("Hand tracking stopped unexpectedly.", worker);
+      return false;
+    }
   }
 
   reset() {
-    this.worker?.postMessage({ type: "reset" });
+    const worker = this.worker;
+    if (!worker) return;
+    try {
+      worker.postMessage({ type: "reset" });
+    } catch {
+      this.fail("Hand tracking stopped unexpectedly.", worker);
+    }
   }
 
   async stop(): Promise<void> {
-    if (this.worker) {
-      this.worker.postMessage({ type: "dispose" });
-      this.worker.terminate();
+    const worker = this.worker;
+    if (worker) {
+      try {
+        worker.postMessage({ type: "dispose" });
+      } catch {
+        // A failed worker can still be terminated safely.
+      }
+      worker.terminate();
     }
     this.worker = undefined;
     this.ready = false;
@@ -133,5 +170,15 @@ export class BrowserGestureEngine implements GestureEngine {
 
   private emit(event: GestureEvent) {
     for (const listener of this.listeners) listener(event);
+  }
+
+  private fail(message: string, worker: Worker) {
+    if (this.worker !== worker) return;
+    worker.terminate();
+    this.worker = undefined;
+    this.ready = false;
+    this.frameInFlight = false;
+    this.frameTimes = [];
+    this.emit({ type: "status", status: "error", message });
   }
 }

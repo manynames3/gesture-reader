@@ -124,17 +124,25 @@ MediaPipe's Gesture Recognizer and its WASM/model assets are bundled locally.
 
 The deterministic swipe detector then:
 
-1. Arms after `Open_Palm` confidence reaches at least `0.70` in three of four
-   frames.
-2. Tracks horizontal palm-center motion for 120–450 ms.
-3. Requires displacement of 14–22% of frame width, depending on sensitivity.
-4. Requires horizontal motion to exceed twice the vertical drift.
-5. Tolerates brief classifier blur while visible hand landmarks keep moving.
-6. Emits one direction, then requires a neutral reset and 700–900 ms cooldown.
+1. Arms after three of four stationary `Open_Palm` frames. A velocity gate keeps
+   an entering hand from counting as a swipe; the confidence threshold ranges
+   from `0.55` in Quick mode to `0.70` in Steady mode.
+2. Tracks palm-center motion for 65–700 ms, depending on sensitivity.
+3. Requires horizontal displacement of 10–18% of frame width plus consistent
+   movement in the detected direction.
+4. Compares horizontal travel with the full vertical path, rejecting spikes,
+   deep arcs, and ordinary hand repositioning.
+5. Uses finger-extension geometry after lock, tolerating classifier blur while
+   canceling a closed fist. A dropped landmark frame re-anchors the trajectory
+   and requires fresh continuous movement.
+6. Emits exactly one direction, then latches until a hand-out or neutral
+   recenter and a 700–900 ms cooldown.
 
 This hybrid approach uses ML for hand and open-palm recognition, but a
 transparent state machine for the page-turn decision. The thresholds are easy
-to reason about, calibrate, and unit-test.
+to reason about, calibrate, and replay at different camera frame rates. The
+camera loop preserves source aspect ratio, never queues duplicate frames, and
+discards late gesture results whenever the reader is paused.
 
 ## Architectural decisions
 
