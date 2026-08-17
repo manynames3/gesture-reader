@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { createReaderCommandBus } from "@/lib/reader/commandBus";
-import { pageTurnTarget } from "@/lib/reader/pageNavigation";
+import {
+  pageTurnForGesture,
+  pageTurnTarget,
+} from "@/lib/reader/pageNavigation";
 import { isPdfBytes, sha256Hex } from "@/lib/storage/hash";
 
 describe("reader core", () => {
@@ -9,6 +12,13 @@ describe("reader core", () => {
     expect(pageTurnTarget(10, 10, "nextPage")).toBeUndefined();
     expect(pageTurnTarget(5, 10, "nextPage")).toBe(6);
     expect(pageTurnTarget(5, 10, "previousPage")).toBe(4);
+  });
+
+  it("maps head tilts to reading direction independently of palm swipes", () => {
+    expect(pageTurnForGesture("right", "headTilt")).toBe("nextPage");
+    expect(pageTurnForGesture("left", "headTilt")).toBe("previousPage");
+    expect(pageTurnForGesture("left", "palmSwipe")).toBe("nextPage");
+    expect(pageTurnForGesture("right", "palmSwipe")).toBe("previousPage");
   });
 
   it("routes all navigation through one command bus", () => {

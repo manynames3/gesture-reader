@@ -669,7 +669,7 @@ test.describe("Gesture Reader", () => {
         }
       ).__emitGesture("left");
     });
-    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
     await page.waitForTimeout(350);
     await page.evaluate(() => {
       (

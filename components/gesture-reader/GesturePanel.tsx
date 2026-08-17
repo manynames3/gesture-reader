@@ -15,7 +15,10 @@ interface GesturePanelProps {
   open: boolean;
   paused: boolean;
   onDisable(): void;
-  onGesture(direction: "left" | "right"): void;
+  onGesture(
+    direction: "left" | "right",
+    source: "palmSwipe" | "headTilt",
+  ): void;
 }
 
 type CalibrationStep = "off" | "left" | "right" | "complete";
@@ -201,7 +204,7 @@ export function GesturePanel({
           ? "right"
           : "left"
         : event.direction;
-      onGestureRef.current(direction);
+      onGestureRef.current(direction, event.source);
     },
     [],
   );
@@ -515,7 +518,7 @@ export function GesturePanel({
               ? "Center your face in view"
               : headState === "calibrating"
                 ? `Look straight ahead — ${Math.round(holdProgress * 100)}%`
-                : "Centered — tilt left or right"
+                : "Centered — right: next · left: previous"
       : visibleStatus === "ready"
         ? !handPresent
           ? "Raise your open palm into view"
@@ -569,7 +572,7 @@ export function GesturePanel({
       ? calibration === "off"
         ? "The camera first learns your comfortable center, then checks one deliberate tilt each way."
         : calibration === "complete"
-          ? "Calibration passed. Finish to enable page turns."
+          ? "Right tilt advances; left tilt goes back. Finish to enable page turns."
           : visibleStatus === "cooldown"
             ? "Come fully back to center and hold briefly before tilting the other way."
             : visibleStatus === "head"

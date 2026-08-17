@@ -100,6 +100,64 @@ describe("HeadTiltDetector", () => {
     },
   );
 
+  it("recognizes a noisy right tilt, resets at neutral, then recognizes a left tilt", () => {
+    const detector = new HeadTiltDetector("medium");
+    let timestamp = calibrate(detector, 0, 75, 3);
+    const next = (rollDegrees: number) => {
+      timestamp += 75;
+      return face(timestamp, rollDegrees);
+    };
+
+    const right = collect(detector, [
+      next(4),
+      next(16),
+      next(17.5),
+      next(16.25),
+      next(18),
+      next(15.75),
+      next(17),
+      next(16.5),
+    ]);
+
+    expect(right).toEqual([
+      expect.objectContaining({ direction: "right" }),
+    ]);
+
+    // Holding the tilt must not repeat, and noisy neutral frames must satisfy
+    // both the reset hold and cooldown before the opposite side can trigger.
+    expect(collect(detector, [next(17), next(16)])).toHaveLength(0);
+    expect(
+      collect(detector, [
+        next(5),
+        next(2),
+        next(4.5),
+        next(1.5),
+        next(3.75),
+        next(2.25),
+        next(4),
+        next(2.5),
+        next(3.5),
+        next(2),
+      ]),
+    ).toHaveLength(0);
+    expect(detector.getMetrics().state).toBe("ready");
+
+    const left = collect(detector, [
+      next(2),
+      next(-10),
+      next(-11.5),
+      next(-10.25),
+      next(-13),
+      next(-10.75),
+      next(-12),
+      next(-11),
+    ]);
+
+    expect(left).toEqual([
+      expect.objectContaining({ direction: "left" }),
+    ]);
+  });
+
   it("rejects short spikes, oscillation, and a sub-threshold hold", () => {
     const spikeDetector = new HeadTiltDetector();
     const spikeStart = calibrate(spikeDetector);

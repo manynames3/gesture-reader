@@ -5,7 +5,8 @@
 Gesture Reader is a local-first PDF library and reader for the web and macOS.
 It turns one page at a time when the computer's camera recognizes either an
 open-palm swipe or a deliberate head tilt—all vision processing happens on the
-device.
+device. Tilt your head right to advance or left to go back; palm swipes keep
+the familiar left-to-advance, right-to-go-back motion.
 
 The application combines the complete PDF.js reading experience with an
 intentional, conservative gesture state machine. PDFs, thumbnails, reading
@@ -58,6 +59,8 @@ The project follows three principles:
 
 - Opt-in video permission with internal or external camera selection.
 - Choice of responsive palm-swipe or hands-free head-tilt control.
+- Source-aware page directions: right head tilt advances and left head tilt
+  goes back, while palm swipes retain their natural opposite mapping.
 - Mirrored preview, sensitivity settings, direction inversion, and a
   two-direction calibration check.
 - Visible confidence, palm-lock, cooldown, and reset feedback.
@@ -106,7 +109,8 @@ All navigation enters a `ReaderCommand` bus. Buttons, keyboard shortcuts,
 bookmarks, page input, and recognized gestures issue the same typed commands.
 Gesture code never reaches into PDF.js directly, which keeps page-boundary
 behavior testable and prevents camera logic from becoming coupled to the
-viewer.
+viewer. The gesture source stays attached until command routing, allowing head
+tilts and palm swipes to use different, explicit direction mappings.
 
 ### PDF integration
 
@@ -151,7 +155,9 @@ a 10–15° tilt held for 220–420 ms depending on sensitivity. A tilt emits on
 page turn, latches through cooldown, and cannot fire again until the reader
 returns to the learned neutral band. Short spikes, oscillation, face loss, and
 remaining tilted are rejected; **Recenter head position** explicitly relearns
-the baseline.
+the baseline. A right tilt issues the next-page command; a left tilt issues the
+previous-page command. This mapping is separate from palm swipes, where left
+means next and right means previous.
 
 This hybrid approach uses ML for hand, open-palm, and face-landmark recognition,
 but transparent state machines for page-turn decisions. The thresholds are
@@ -270,8 +276,8 @@ the Mac App Store.
 
 1. Select **Head tilt** under **Control method**.
 2. Look comfortably toward the screen while the camera learns your center.
-3. Tilt left or right by roughly 12–15° and hold until the progress reaches
-   100%.
+3. Tilt **right for the next page** or **left for the previous page** by roughly
+   12–15°, then hold until the progress reaches 100%.
 4. Return fully to center before the next page turn.
 5. Select **Recenter head position** after moving the camera or changing your
    reading posture.
@@ -303,7 +309,8 @@ The test suite covers:
   responsive fast-path recognition, cooldown, neutral reset, boundaries, and
   repeated-frame suppression.
 - Head-roll geometry, neutral calibration, deliberate holds at 8/12/18 FPS,
-  face loss, posture drift, spike rejection, cooldown, and return-to-center.
+  face loss, posture drift, spike rejection, cooldown, return-to-center, noisy
+  right-to-left sequences, and source-aware page-direction routing.
 - Web import, SHA-256 deduplication, IndexedDB state, removal, and quota errors.
 - Desktop catalog recovery, managed storage, and reading-state persistence.
 - PDF navigation and legacy zoom-state repair.

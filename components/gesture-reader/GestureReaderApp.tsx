@@ -10,7 +10,10 @@ import {
 import Link from "next/link";
 import { analyzeDocument } from "@/lib/pdf/analyzePdf";
 import { createReaderCommandBus } from "@/lib/reader/commandBus";
-import { pageTurnTarget } from "@/lib/reader/pageNavigation";
+import {
+  pageTurnForGesture,
+  pageTurnTarget,
+} from "@/lib/reader/pageNavigation";
 import { createLibraryRepository } from "@/lib/storage/repository";
 import type {
   DocumentRecord,
@@ -407,9 +410,12 @@ export function GestureReaderApp() {
   }, []);
 
   const handleGesture = useCallback(
-    (direction: "left" | "right") => {
+    (
+      direction: "left" | "right",
+      source: "palmSwipe" | "headTilt",
+    ) => {
       dispatchPageTurn(
-        direction === "left" ? "nextPage" : "previousPage",
+        pageTurnForGesture(direction, source),
         "gesture",
       );
     },
