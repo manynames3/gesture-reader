@@ -9,6 +9,18 @@ export type ReaderCommand =
       source: "bookmark" | "search" | "input";
     };
 
+export type NavigationResult =
+  | {
+      status: "confirmed";
+      from: number;
+      to: number;
+    }
+  | {
+      status: "rejected";
+      reason: "boundary" | "busy" | "notReady" | "timeout";
+      page?: number;
+    };
+
 export type ReaderLayout = "single" | "continuous" | "spread";
 
 export interface ReadingState {
@@ -72,10 +84,12 @@ export interface LibraryRepository {
 }
 
 export type GestureSensitivity = "low" | "medium" | "high";
+export type GestureInputMode = "palm" | "head";
 
 export interface GestureSettings {
   deviceId?: string;
   sensitivity: GestureSensitivity;
+  mode: GestureInputMode;
   inverted: boolean;
   showPreview: boolean;
 }
@@ -86,20 +100,33 @@ export type GestureStatus =
   | "loading"
   | "ready"
   | "hand"
+  | "head"
   | "cooldown"
   | "paused"
   | "error";
 
 export type GestureEvent =
   | { type: "status"; status: GestureStatus; message?: string }
-  | { type: "gesture"; direction: "left" | "right"; confidence: number }
+  | {
+      type: "gesture";
+      source: "palmSwipe" | "headTilt";
+      direction: "left" | "right";
+      confidence: number;
+    }
   | {
       type: "metrics";
+      mode: GestureInputMode;
       fps: number;
       confidence: number;
       handPresent: boolean;
       armProgress: number;
-      status: "ready" | "hand" | "cooldown";
+      facePresent: boolean;
+      rollDegrees: number;
+      neutralRollDegrees: number;
+      holdProgress: number;
+      holdDirection?: "left" | "right";
+      headState?: "calibrating" | "ready" | "holding" | "cooldown";
+      status: "ready" | "hand" | "head" | "cooldown";
     };
 
 export interface GestureEngine {

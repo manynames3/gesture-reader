@@ -1,3 +1,21 @@
+import type { GestureEvent } from "@/lib/types";
+
+type GestureSource = Extract<
+  GestureEvent,
+  { type: "gesture" }
+>["source"];
+
+export function pageTurnForGesture(
+  direction: "left" | "right",
+  source: GestureSource,
+): "nextPage" | "previousPage" {
+  const movesForward =
+    source === "headTilt"
+      ? direction === "right"
+      : direction === "left";
+  return movesForward ? "nextPage" : "previousPage";
+}
+
 export function pageTurnTarget(
   currentPage: number,
   pageCount: number,
