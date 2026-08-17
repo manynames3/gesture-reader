@@ -9,6 +9,18 @@ export type ReaderCommand =
       source: "bookmark" | "search" | "input";
     };
 
+export type NavigationResult =
+  | {
+      status: "confirmed";
+      from: number;
+      to: number;
+    }
+  | {
+      status: "rejected";
+      reason: "boundary" | "busy" | "notReady" | "timeout";
+      page?: number;
+    };
+
 export type ReaderLayout = "single" | "continuous" | "spread";
 
 export interface ReadingState {

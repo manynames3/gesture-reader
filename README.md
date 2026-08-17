@@ -29,8 +29,9 @@ navigation.
 The project follows three principles:
 
 1. **Local by default.** Documents and camera data stay on the device.
-2. **One gesture, one result.** A recognized swipe or tilt turns exactly one
-   page and never wraps at document boundaries.
+2. **One gesture, one confirmed result.** A recognized swipe or tilt requests
+   exactly one page, never wraps, and is reported as successful only after
+   PDF.js confirms the exact target page.
 3. **A real PDF reader first.** Gesture support sits beside search, selection,
    thumbnails, outlines, print, download, zoom, rotation, and multiple layouts.
 
@@ -64,8 +65,9 @@ The project follows three principles:
 - Mirrored preview, sensitivity settings, direction inversion, and a
   two-direction calibration check.
 - Visible confidence, palm-lock, cooldown, and reset feedback.
-- Recognition pauses during dialogs, text entry, page animation, window blur,
-  or backgrounding.
+- Recognition pauses during dialogs, text entry, window blur, or backgrounding.
+  While a page turn is pending, camera frames keep flowing so the detector can
+  observe the required hand/head reset, but extra turn events are suppressed.
 - Camera tracks are stopped immediately when gestures are disabled or the app
   is hidden or closed.
 
@@ -91,6 +93,7 @@ flowchart LR
   B --> Q
   Q --> A["PDF.js adapter"]
   A --> V["Full PDF.js viewer"]
+  V -. "exact-page confirmation" .-> A
 
   R["LibraryRepository"] --> IDB["Web: IndexedDB"]
   R --> IPC["macOS: narrow IPC bridge"]
@@ -110,7 +113,10 @@ bookmarks, page input, and recognized gestures issue the same typed commands.
 Gesture code never reaches into PDF.js directly, which keeps page-boundary
 behavior testable and prevents camera logic from becoming coupled to the
 viewer. The gesture source stays attached until command routing, allowing head
-tilts and palm swipes to use different, explicit direction mappings.
+tilts and palm swipes to use different, explicit direction mappings. Command
+delivery is asynchronous: the adapter returns `confirmed`, `boundary`,
+`notReady`, `busy`, or `timeout`, so the camera UI cannot mistake detector
+cooldown for a completed page turn.
 
 ### PDF integration
 
@@ -119,7 +125,10 @@ The project embeds the full PDF.js viewer through the pinned
 A small adapter listens to PDF.js event-bus events for document lifecycle,
 page, scale, rotation, scroll mode, and spread mode changes. This preserves
 PDF.js features while isolating its internal APIs from the rest of the
-application.
+application. Page turns are computed from PDF.js's live page state, retried once
+with the same absolute target if necessary, and succeed only when the adapter
+observes PDF.js's matching visible-page `updateviewarea` event. A relative
+`next` or `previous` command is never issued twice.
 
 ### Gesture pipeline
 
@@ -163,7 +172,10 @@ This hybrid approach uses ML for hand, open-palm, and face-landmark recognition,
 but transparent state machines for page-turn decisions. The thresholds are
 easy to reason about, calibrate, and replay at different camera frame rates.
 The camera loop preserves source aspect ratio, never queues duplicate frames,
-and discards late gesture results whenever the reader is paused.
+and discards late gesture results whenever the reader is paused. It continues
+processing reset frames while an acknowledged page request is pending, which
+prevents a palm or head returned to neutral during the turn from leaving the
+detector stuck in cooldown.
 
 ## Architectural decisions
 
@@ -174,6 +186,7 @@ and discards late gesture results whenever the reader is paused.
 | Package macOS with Electron | Chromium provides predictable behavior for PDF.js, camera APIs, workers, WebAssembly, and the existing React renderer. | The application bundle is larger than a native or Tauri build. |
 | Keep recognition in a worker | Camera inference cannot block PDF scrolling or UI interaction. | Frames and worker lifecycle require careful coordination. |
 | Use deterministic motion state machines | Palm lock, displacement, head hold, neutral reset, cooldown, and false-positive behavior can be tested without retraining a model. | Thresholds still need physical calibration for different cameras, posture, and lighting. |
+| Acknowledge page turns through PDF.js | The UI says a page opened only after the viewer confirms the exact target; a dropped command can no longer look successful. | Each turn may wait briefly for confirmation and performs one safe absolute-page retry before reporting failure. |
 | Keep web and macOS libraries separate | No account, backend, or synchronization service is required; privacy boundaries stay obvious. | Reading state does not move automatically between installations. |
 | Copy desktop imports into managed storage | The application can offer a stable library and safe removal without mutating the original file. | Imported PDFs consume additional local disk space. |
 | Self-host runtime assets | The reader launches offline and camera/PDF processing has no runtime CDN dependency. | Builds are larger, and the pinned models must be updated intentionally. |
@@ -314,8 +327,11 @@ The test suite covers:
 - Web import, SHA-256 deduplication, IndexedDB state, removal, and quota errors.
 - Desktop catalog recovery, managed storage, and reading-state persistence.
 - PDF navigation and legacy zoom-state repair.
+- Exact-page navigation acknowledgement, absolute-target retry, timeout,
+  concurrent-turn rejection, reader disposal, and truthful success feedback.
 - Browser flows with real PDF bytes, a fake local camera stream, mode switching
-  without a second camera request, and the real bundled Face Landmarker model.
+  without a second camera request, pause/resume races, confirmed palm/head page
+  turns, and the real bundled Face Landmarker model.
 - Electron startup, isolated IPC, secure protocol, and managed PDF storage.
 - Rendered application metadata and self-hosted runtime assets.
 

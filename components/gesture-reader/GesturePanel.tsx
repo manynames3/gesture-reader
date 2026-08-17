@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BrowserGestureEngine } from "@/lib/gesture/browserGestureEngine";
 import { openPalmThresholdForSensitivity } from "@/lib/gesture/swipeDetector";
 import type {
@@ -8,17 +14,19 @@ import type {
   GestureInputMode,
   GestureSensitivity,
   GestureStatus,
+  NavigationResult,
 } from "@/lib/types";
 
 interface GesturePanelProps {
   enabled: boolean;
   open: boolean;
   paused: boolean;
+  navigationBusy: boolean;
   onDisable(): void;
   onGesture(
     direction: "left" | "right",
     source: "palmSwipe" | "headTilt",
-  ): void;
+  ): Promise<NavigationResult>;
 }
 
 type CalibrationStep = "off" | "left" | "right" | "complete";
@@ -30,7 +38,7 @@ const statusCopy: Record<GestureStatus, string> = {
   ready: "Ready for an open palm",
   hand: "Palm detected — swipe",
   head: "Head tilt detected — hold",
-  cooldown: "Page turned — reset your hand",
+  cooldown: "Gesture detected — reset your hand",
   paused: "Paused",
   error: "Camera needs attention",
 };
@@ -48,6 +56,7 @@ export function GesturePanel({
   enabled,
   open,
   paused,
+  navigationBusy,
   onDisable,
   onGesture,
 }: GesturePanelProps) {
@@ -56,12 +65,17 @@ export function GesturePanel({
   const calibrationRef = useRef<CalibrationStep>("off");
   const pausedRef = useRef(paused);
   const externalPausedRef = useRef(paused);
+  const navigationBusyRef = useRef(navigationBusy);
+  const navigationRequestInFlightRef = useRef(false);
   const windowFocusedRef = useRef(true);
   const lastEngineStatusRef = useRef<GestureStatus>("off");
   const sensitivityRef = useRef<GestureSensitivity>("medium");
   const invertedRef = useRef(false);
   const onDisableRef = useRef(onDisable);
   const onGestureRef = useRef(onGesture);
+  const turnFeedbackTimerRef =
+    useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const turnFeedbackGenerationRef = useRef(0);
   const [status, setStatus] = useState<GestureStatus>("off");
   const [statusMessage, setStatusMessage] = useState("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -101,23 +115,43 @@ export function GesturePanel({
   >("calibrating");
   const [calibration, setCalibration] = useState<CalibrationStep>("off");
   const [calibrationFeedback, setCalibrationFeedback] = useState("");
+  const [turnFeedback, setTurnFeedback] = useState("");
 
-  useEffect(() => {
+  // Camera events do not wait for passive effects. Update every event guard
+  // before paint so the first gesture after a modal closes is not discarded.
+  useLayoutEffect(() => {
     externalPausedRef.current = paused;
     pausedRef.current = paused || !windowFocusedRef.current;
-  }, [paused]);
-
-  useEffect(() => {
+    navigationBusyRef.current = navigationBusy;
     onDisableRef.current = onDisable;
-  }, [onDisable]);
-
-  useEffect(() => {
     onGestureRef.current = onGesture;
-  }, [onGesture]);
-
-  useEffect(() => {
     calibrationRef.current = calibration;
-  }, [calibration]);
+  }, [calibration, navigationBusy, onDisable, onGesture, paused]);
+
+  const clearTurnFeedback = useCallback(() => {
+    turnFeedbackGenerationRef.current += 1;
+    clearTimeout(turnFeedbackTimerRef.current);
+    setTurnFeedback("");
+  }, []);
+
+  const showTurnFeedback = useCallback(
+    (message: string, clearAfter = 0) => {
+      clearTimeout(turnFeedbackTimerRef.current);
+      setTurnFeedback(message);
+      if (clearAfter > 0) {
+        turnFeedbackTimerRef.current = setTimeout(
+          () => setTurnFeedback(""),
+          clearAfter,
+        );
+      }
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => clearTimeout(turnFeedbackTimerRef.current),
+    [],
+  );
 
   useEffect(() => {
     localStorage.setItem(
@@ -160,7 +194,13 @@ export function GesturePanel({
 
       // A frame can finish after a modal opens, the page starts animating, or
       // the window loses focus. Never let that stale result turn a page.
-      if (pausedRef.current) return;
+      if (
+        pausedRef.current ||
+        navigationBusyRef.current ||
+        navigationRequestInFlightRef.current
+      ) {
+        return;
+      }
       if (
         (modeRef.current === "palm" && event.source !== "palmSwipe") ||
         (modeRef.current === "head" && event.source !== "headTilt")
@@ -204,9 +244,42 @@ export function GesturePanel({
           ? "right"
           : "left"
         : event.direction;
-      onGestureRef.current(direction, event.source);
+      const feedbackGeneration = turnFeedbackGenerationRef.current + 1;
+      turnFeedbackGenerationRef.current = feedbackGeneration;
+      navigationRequestInFlightRef.current = true;
+      showTurnFeedback(
+        event.source === "headTilt"
+          ? "Tilt detected — opening page…"
+          : "Swipe detected — opening page…",
+      );
+      void onGestureRef
+        .current(direction, event.source)
+        .then((result) => {
+          if (turnFeedbackGenerationRef.current !== feedbackGeneration) return;
+          if (result.status === "confirmed") {
+            showTurnFeedback(`Now on page ${result.to}`, 1_800);
+          } else if (result.reason === "boundary") {
+            showTurnFeedback("No page in that direction", 1_800);
+          } else if (result.reason === "busy") {
+            showTurnFeedback(
+              "Finishing the last turn — reset and try again",
+              1_800,
+            );
+          } else if (result.reason === "notReady") {
+            showTurnFeedback("PDF still opening — reset and try again", 1_800);
+          } else {
+            showTurnFeedback("Page did not move — reset and try again", 1_800);
+          }
+        })
+        .catch(() => {
+          if (turnFeedbackGenerationRef.current !== feedbackGeneration) return;
+          showTurnFeedback("Page did not move — reset and try again", 1_800);
+        })
+        .finally(() => {
+          navigationRequestInFlightRef.current = false;
+        });
     },
-    [],
+    [showTurnFeedback],
   );
 
   useEffect(() => {
@@ -503,15 +576,15 @@ export function GesturePanel({
   const visibleStatus = paused && enabled ? "paused" : status;
   const relativeRoll = rollDegrees - neutralRollDegrees;
   const headDirection = holdDirection ?? (relativeRoll < 0 ? "left" : "right");
-  const cameraStatus =
-    inputMode === "head"
+  const cameraStatus = turnFeedback ||
+    (inputMode === "head"
       ? visibleStatus === "requesting" ||
         visibleStatus === "loading" ||
         visibleStatus === "paused" ||
         visibleStatus === "error"
         ? statusCopy[visibleStatus]
         : visibleStatus === "cooldown"
-          ? "Page turned — return your head to center"
+          ? "Gesture detected — return your head to center"
           : visibleStatus === "head"
             ? `Hold ${headDirection} — ${Math.round(holdProgress * 100)}%`
             : !facePresent
@@ -527,7 +600,7 @@ export function GesturePanel({
             : `Hold steady — ${armProgress}/3`
         : visibleStatus === "hand"
           ? "Palm locked — swipe now"
-          : statusCopy[visibleStatus];
+          : statusCopy[visibleStatus]);
   const calibrationDirection =
     calibration === "left" || calibration === "right" ? calibration : null;
   const calibrationPrompt =
@@ -593,6 +666,7 @@ export function GesturePanel({
                 : "Raise your hand above desk height so the full wrist and all five fingers are inside the preview.");
 
   function handleCalibrationButton() {
+    clearTurnFeedback();
     if (calibration === "complete") {
       calibrationRef.current = "off";
       setCalibration("off");
@@ -614,6 +688,7 @@ export function GesturePanel({
   }
 
   function recenterHead() {
+    clearTurnFeedback();
     calibrationRef.current = "off";
     setCalibration("off");
     setCalibrationFeedback("");
@@ -628,6 +703,7 @@ export function GesturePanel({
 
   function selectInputMode(mode: GestureInputMode) {
     if (mode === inputMode) return;
+    clearTurnFeedback();
     localStorage.setItem(
       "gesture-reader:input-mode",
       JSON.stringify(mode),

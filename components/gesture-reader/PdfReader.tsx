@@ -6,6 +6,7 @@ import {
   normalizePdfZoom,
   zoomFromPdfScaleEvent,
 } from "@/lib/pdf/zoom";
+import { ConfirmedPageNavigator } from "@/lib/reader/confirmedPageNavigation";
 import type { ReaderCommandBus } from "@/lib/reader/commandBus";
 import { pageTurnTarget } from "@/lib/reader/pageNavigation";
 import type {
@@ -39,6 +40,8 @@ interface ViewerApplication {
     pagesRotation: number;
     scrollMode: number;
     spreadMode: number;
+    _getVisiblePages?(): { ids?: Set<number> };
+    scrollPageIntoView?(options: { pageNumber: number }): void;
   };
 }
 
@@ -98,6 +101,12 @@ export function PdfReader({
     let viewerDocument: Document | undefined;
     let interactionObserver: MutationObserver | undefined;
     let cleanupViewerInteraction: (() => void) | undefined;
+    let pageNavigator: ConfirmedPageNavigator | undefined;
+    let readySettled = false;
+    let resolveViewerReady: (ready: boolean) => void = () => undefined;
+    const viewerReadyPromise = new Promise<boolean>((resolve) => {
+      resolveViewerReady = resolve;
+    });
     const listeners: Array<{
       name: string;
       listener: (event: Record<string, unknown>) => void;
@@ -137,6 +146,10 @@ export function PdfReader({
       app.pdfViewer.currentPageNumber = targetPage;
       update({ pageCount, currentPage: targetPage, zoom });
       setViewerReady(true);
+      if (!readySettled) {
+        readySettled = true;
+        resolveViewerReady(true);
+      }
       onReadyRef.current();
     }
 
@@ -155,6 +168,18 @@ export function PdfReader({
         const initialized = await element.initPromise;
         if (disposed || !initialized.viewerApp) return;
         app = initialized.viewerApp as unknown as ViewerApplication;
+        pageNavigator = new ConfirmedPageNavigator({
+          getCurrentPage: () => app?.pdfViewer.currentPageNumber ?? 1,
+          setCurrentPage: (page) => {
+            if (!app?.pdfDocument) {
+              throw new Error("PDF viewer is not ready");
+            }
+            app.pdfViewer.currentPageNumber = page;
+          },
+          forcePageIntoView: (page) => {
+            app?.pdfViewer.scrollPageIntoView?.({ pageNumber: page });
+          },
+        });
         viewerDocument = element.iframe?.contentDocument ?? undefined;
 
         const isTextEntry = (target: EventTarget | null) => {
@@ -212,7 +237,21 @@ export function PdfReader({
 
         listen("pagechanging", (event) => {
           const page = Number(event.pageNumber);
-          if (Number.isFinite(page)) update({ currentPage: page });
+          if (Number.isFinite(page)) {
+            update({ currentPage: page });
+          }
+        });
+        listen("updateviewarea", (event) => {
+          const location = event.location as
+            | { pageNumber?: unknown }
+            | undefined;
+          const firstVisiblePage = Number(location?.pageNumber);
+          if (Number.isFinite(firstVisiblePage)) {
+            pageNavigator?.confirm(firstVisiblePage);
+          }
+          for (const page of app?.pdfViewer._getVisiblePages?.().ids ?? []) {
+            pageNavigator?.confirm(page);
+          }
         });
         listen("pagesloaded", (event) => {
           const pageCount = Number(event.pagesCount);
@@ -244,6 +283,11 @@ export function PdfReader({
         listen("spreadmodechanged", updateLayout);
         listen("documenterror", (event) => {
           if (app?.pdfDocument) return;
+          pageNavigator?.dispose();
+          if (!readySettled) {
+            readySettled = true;
+            resolveViewerReady(false);
+          }
           const reason = event.reason as
             | { message?: unknown }
             | string
@@ -260,34 +304,66 @@ export function PdfReader({
             message,
           );
         });
+        restoreViewerState();
       } catch (error) {
+        if (!readySettled) {
+          readySettled = true;
+          resolveViewerReady(false);
+        }
         onErrorRef.current(
           error instanceof Error ? error.message : "This PDF could not be opened.",
         );
       }
     }
 
-    const unsubscribe = commandBus.subscribe((command) => {
-      if (!app) return;
+    const unsubscribe = commandBus.subscribe(async (command) => {
+      if (!restored) {
+        const ready = await viewerReadyPromise;
+        if (!ready || disposed) {
+          return { status: "rejected", reason: "notReady" };
+        }
+      }
+      if (!app?.pdfDocument || !pageNavigator) {
+        return { status: "rejected", reason: "notReady" };
+      }
       const pageCount = app.pdfDocument?.numPages ?? stateRef.current.pageCount;
-      let target = app.pdfViewer.currentPageNumber;
+      const currentPage = app.pdfViewer.currentPageNumber;
+      let target = currentPage;
       if (
         command.type === "nextPage" ||
         command.type === "previousPage"
       ) {
-        target =
-          pageTurnTarget(target, pageCount, command.type) ??
-          app.pdfViewer.currentPageNumber;
-      } else if ("page" in command) target = command.page;
-      app.pdfViewer.currentPageNumber = Math.min(
-        Math.max(target, 1),
-        pageCount || 1,
-      );
+        const pageTurn = pageTurnTarget(
+          currentPage,
+          pageCount,
+          command.type,
+        );
+        if (pageTurn === undefined) {
+          return {
+            status: "rejected",
+            reason: "boundary",
+            page: currentPage,
+          };
+        }
+        target = pageTurn;
+      } else if ("page" in command) {
+        target = Math.min(Math.max(command.page, 1), pageCount || 1);
+      }
+      const result = await pageNavigator.navigate(target);
+      if (result.status === "confirmed") {
+        update({ currentPage: result.to });
+      }
+      return result;
     });
 
     void initialize();
     return () => {
       disposed = true;
+      if (!readySettled) {
+        readySettled = true;
+        resolveViewerReady(false);
+      }
+      pageNavigator?.dispose();
       cleanupViewerInteraction?.();
       unsubscribe();
       if (app) {

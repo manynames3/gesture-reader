@@ -371,7 +371,10 @@ test.describe("Gesture Reader", () => {
             value: GestureTestWorker,
           });
         },
-        __emitGesture(direction: "left" | "right") {
+        __emitGesture(
+          direction: "left" | "right",
+          includeCooldown = false,
+        ) {
           const worker = workers.at(-1);
           worker?.onmessage?.(
             new MessageEvent("message", {
@@ -382,6 +385,17 @@ test.describe("Gesture Reader", () => {
               },
             }),
           );
+          if (includeCooldown) {
+            worker?.onmessage?.(
+              new MessageEvent("message", {
+                data: {
+                  type: "frameDone",
+                  ...gestureFrame,
+                  state: "cooldown",
+                },
+              }),
+            );
+          }
         },
         __emitGestureWorkerError() {
           const worker = workers.at(-1);
@@ -527,7 +541,10 @@ test.describe("Gesture Reader", () => {
     await page.evaluate(() => {
       (
         window as unknown as {
-          __emitGesture(direction: "left" | "right"): void;
+          __emitGesture(
+            direction: "left" | "right",
+            includeCooldown?: boolean,
+          ): void;
         }
       ).__emitGesture("left");
     });
@@ -576,7 +593,10 @@ test.describe("Gesture Reader", () => {
     await page.evaluate(() => {
       (
         window as unknown as {
-          __emitGesture(direction: "left" | "right"): void;
+          __emitGesture(
+            direction: "left" | "right",
+            includeCooldown?: boolean,
+          ): void;
         }
       ).__emitGesture("right");
     });
@@ -590,11 +610,16 @@ test.describe("Gesture Reader", () => {
     await page.evaluate(() => {
       (
         window as unknown as {
-          __emitGesture(direction: "left" | "right"): void;
+          __emitGesture(
+            direction: "left" | "right",
+            includeCooldown?: boolean,
+          ): void;
         }
-      ).__emitGesture("left");
+      ).__emitGesture("left", true);
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Now on page 2", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Page turned —/)).toHaveCount(0);
 
     await page.waitForTimeout(350);
     const cameraRequestsBeforeHeadMode = await page.evaluate(
@@ -665,20 +690,28 @@ test.describe("Gesture Reader", () => {
       });
       (
         window as unknown as {
-          __emitGesture(direction: "left" | "right"): void;
+          __emitGesture(
+            direction: "left" | "right",
+            includeCooldown?: boolean,
+          ): void;
         }
-      ).__emitGesture("left");
+      ).__emitGesture("left", true);
     });
     await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Now on page 1", { exact: true })).toBeVisible();
     await page.waitForTimeout(350);
     await page.evaluate(() => {
       (
         window as unknown as {
-          __emitGesture(direction: "left" | "right"): void;
+          __emitGesture(
+            direction: "left" | "right",
+            includeCooldown?: boolean,
+          ): void;
         }
-      ).__emitGesture("right");
+      ).__emitGesture("right", true);
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Now on page 2", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Palm swipe" }).click();
 
     const requestCountBeforeDisconnect = await page.evaluate(
@@ -715,9 +748,12 @@ test.describe("Gesture Reader", () => {
     await page.evaluate(() => {
       (
         window as unknown as {
-          __emitGesture(direction: "left" | "right"): void;
+          __emitGesture(
+            direction: "left" | "right",
+            includeCooldown?: boolean,
+          ): void;
         }
-      ).__emitGesture("left");
+      ).__emitGesture("left", true);
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "0 saved" }).click();
@@ -728,11 +764,15 @@ test.describe("Gesture Reader", () => {
     await page.evaluate(() => {
       (
         window as unknown as {
-          __emitGesture(direction: "left" | "right"): void;
+          __emitGesture(
+            direction: "left" | "right",
+            includeCooldown?: boolean,
+          ): void;
         }
-      ).__emitGesture("left");
+      ).__emitGesture("left", true);
     });
-    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Now on page 3", { exact: true })).toBeVisible();
     await expect(page.locator(".camera-frame__status")).not.toContainText(
       "Paused",
     );

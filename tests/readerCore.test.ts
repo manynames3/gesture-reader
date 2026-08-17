@@ -21,14 +21,21 @@ describe("reader core", () => {
     expect(pageTurnForGesture("right", "palmSwipe")).toBe("previousPage");
   });
 
-  it("routes all navigation through one command bus", () => {
+  it("routes navigation through one acknowledged command bus", async () => {
     const bus = createReaderCommandBus();
-    const listener = vi.fn();
+    const listener = vi.fn(() => ({
+      status: "confirmed" as const,
+      from: 1,
+      to: 2,
+    }));
     const unsubscribe = bus.subscribe(listener);
-    bus.dispatch({ type: "nextPage", source: "gesture" });
-    bus.dispatch({ type: "goToPage", page: 7, source: "bookmark" });
+    await bus.dispatch({ type: "nextPage", source: "gesture" });
+    await bus.dispatch({ type: "goToPage", page: 7, source: "bookmark" });
     unsubscribe();
-    bus.dispatch({ type: "previousPage", source: "keyboard" });
+    const withoutReader = await bus.dispatch({
+      type: "previousPage",
+      source: "keyboard",
+    });
 
     expect(listener).toHaveBeenCalledTimes(2);
     expect(listener).toHaveBeenLastCalledWith({
@@ -36,6 +43,40 @@ describe("reader core", () => {
       page: 7,
       source: "bookmark",
     });
+    expect(withoutReader).toEqual({
+      status: "rejected",
+      reason: "notReady",
+    });
+  });
+
+  it("does not deliver an in-flight command to a newly subscribed reader", async () => {
+    const bus = createReaderCommandBus();
+    let releaseFirst: (() => void) | undefined;
+    const firstResult = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = vi.fn(async () => {
+      await firstResult;
+      return { status: "rejected" as const, reason: "notReady" as const };
+    });
+    const second = vi.fn(() => ({
+      status: "confirmed" as const,
+      from: 1,
+      to: 2,
+    }));
+    const unsubscribeFirst = bus.subscribe(first);
+
+    const result = bus.dispatch({ type: "nextPage", source: "gesture" });
+    unsubscribeFirst();
+    bus.subscribe(second);
+    releaseFirst?.();
+
+    await expect(result).resolves.toEqual({
+      status: "rejected",
+      reason: "notReady",
+    });
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).not.toHaveBeenCalled();
   });
 
   it("hashes and validates PDF bytes", async () => {

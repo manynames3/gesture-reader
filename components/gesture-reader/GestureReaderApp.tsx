@@ -10,15 +10,13 @@ import {
 import Link from "next/link";
 import { analyzeDocument } from "@/lib/pdf/analyzePdf";
 import { createReaderCommandBus } from "@/lib/reader/commandBus";
-import {
-  pageTurnForGesture,
-  pageTurnTarget,
-} from "@/lib/reader/pageNavigation";
+import { pageTurnForGesture } from "@/lib/reader/pageNavigation";
 import { createLibraryRepository } from "@/lib/storage/repository";
 import type {
   DocumentRecord,
   ImportResult,
   LibraryRepository,
+  NavigationResult,
   PdfSource,
   ReadingState,
   StorageEstimate,
@@ -96,8 +94,7 @@ export function GestureReaderApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef =
     useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const pageAnimationTimerRef =
-    useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pageTurnInFlightRef = useRef(false);
   const sourceRef = useRef<PdfSource | null>(null);
   const commandBus = useMemo(() => createReaderCommandBus(), []);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
@@ -111,6 +108,7 @@ export function GestureReaderApp() {
   const [gestureEnabled, setGestureEnabled] = useState(false);
   const [gesturePanelOpen, setGesturePanelOpen] = useState(false);
   const [pageAnimating, setPageAnimating] = useState(false);
+  const [readerReady, setReaderReady] = useState(false);
   const [viewerInteracting, setViewerInteracting] = useState(false);
   const [bookmarkMenuOpen, setBookmarkMenuOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<DocumentRecord>();
@@ -172,7 +170,6 @@ export function GestureReaderApp() {
       window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
       sourceRef.current?.release();
       clearTimeout(saveTimerRef.current);
-      clearTimeout(pageAnimationTimerRef.current);
     };
   }, [showToast]);
 
@@ -258,6 +255,7 @@ export function GestureReaderApp() {
       const repository = repositoryRef.current;
       if (!repository) return;
       setReaderError("");
+      setReaderReady(false);
       setLoading(true);
       try {
         sourceRef.current?.release();
@@ -295,6 +293,7 @@ export function GestureReaderApp() {
     setGesturePanelOpen(false);
     setBookmarkMenuOpen(false);
     setViewerInteracting(false);
+    setReaderReady(false);
     setReaderError("");
     history.replaceState({}, "", location.pathname);
     await refreshLibrary();
@@ -325,32 +324,52 @@ export function GestureReaderApp() {
   );
 
   const dispatchPageTurn = useCallback(
-    (
+    async (
       type: "nextPage" | "previousPage",
       source: "gesture" | "keyboard" | "button",
-    ) => {
-      const reading = activeDocument?.reading;
-      if (!reading || pageAnimating) return;
-      if (
-        pageTurnTarget(reading.currentPage, reading.pageCount, type) ===
-        undefined
-      ) {
-        showToast(
-          type === "previousPage"
-            ? "You’re already at the first page."
-            : "You’ve reached the last page.",
-        );
-        return;
+    ): Promise<NavigationResult> => {
+      if (!activeDocument) {
+        return { status: "rejected", reason: "notReady" };
       }
-      commandBus.dispatch({ type, source });
+      if (pageTurnInFlightRef.current) {
+        return {
+          status: "rejected",
+          reason: "busy",
+          page: activeDocument.reading.currentPage,
+        };
+      }
+
+      pageTurnInFlightRef.current = true;
       setPageAnimating(true);
-      clearTimeout(pageAnimationTimerRef.current);
-      pageAnimationTimerRef.current = setTimeout(
-        () => setPageAnimating(false),
-        320,
-      );
+      let result: NavigationResult;
+      try {
+        // Relative commands are issued once. The PDF adapter may retry the
+        // same absolute target page, but this layer must never issue "next"
+        // twice or let an old gesture spill into a newly opened document.
+        result = await commandBus.dispatch({ type, source });
+      } catch {
+        result = { status: "rejected", reason: "timeout" };
+      } finally {
+        pageTurnInFlightRef.current = false;
+        setPageAnimating(false);
+      }
+
+      if (result.status === "rejected") {
+        if (result.reason === "boundary") {
+          showToast(
+            type === "previousPage"
+              ? "You’re already at the first page."
+              : "You’ve reached the last page.",
+          );
+        } else if (result.reason === "notReady") {
+          showToast("The PDF is still opening. Please try once more.");
+        } else if (result.reason === "timeout") {
+          showToast("The page did not move. Please try again.");
+        }
+      }
+      return result;
     },
-    [activeDocument?.reading, commandBus, pageAnimating, showToast],
+    [activeDocument, commandBus, showToast],
   );
 
   useEffect(() => {
@@ -364,10 +383,10 @@ export function GestureReaderApp() {
       }
       if (event.key === "ArrowRight" || event.key === "PageDown") {
         event.preventDefault();
-        dispatchPageTurn("nextPage", "keyboard");
+        void dispatchPageTurn("nextPage", "keyboard");
       } else if (event.key === "ArrowLeft" || event.key === "PageUp") {
         event.preventDefault();
-        dispatchPageTurn("previousPage", "keyboard");
+        void dispatchPageTurn("previousPage", "keyboard");
       } else if (event.key === "Escape" && gesturePanelOpen) {
         setGesturePanelOpen(false);
       }
@@ -414,7 +433,7 @@ export function GestureReaderApp() {
       direction: "left" | "right",
       source: "palmSwipe" | "headTilt",
     ) => {
-      dispatchPageTurn(
+      return dispatchPageTurn(
         pageTurnForGesture(direction, source),
         "gesture",
       );
@@ -459,7 +478,9 @@ export function GestureReaderApp() {
             <button
               type="button"
               className="icon-button"
-              onClick={() => dispatchPageTurn("previousPage", "button")}
+              onClick={() =>
+                void dispatchPageTurn("previousPage", "button")
+              }
               disabled={activeDocument.reading.currentPage <= 1}
               aria-label="Previous page"
             >
@@ -468,7 +489,7 @@ export function GestureReaderApp() {
             <button
               type="button"
               className="icon-button"
-              onClick={() => dispatchPageTurn("nextPage", "button")}
+              onClick={() => void dispatchPageTurn("nextPage", "button")}
               disabled={
                 activeDocument.reading.pageCount > 0 &&
                 activeDocument.reading.currentPage >=
@@ -516,7 +537,7 @@ export function GestureReaderApp() {
                         type="button"
                         key={page}
                         onClick={() => {
-                          commandBus.dispatch({
+                          void commandBus.dispatch({
                             type: "goToPage",
                             page,
                             source: "bookmark",
@@ -586,15 +607,19 @@ export function GestureReaderApp() {
             commandBus={commandBus}
             onReadingChange={updateReadingState}
             onInteractionPause={setViewerInteracting}
-            onReady={() => setLoading(false)}
+            onReady={() => {
+              setReaderReady(true);
+              setLoading(false);
+            }}
             onError={setReaderError}
           />
           {gestureEnabled && (
             <GesturePanel
               enabled={gestureEnabled}
               open={gesturePanelOpen}
+              navigationBusy={pageAnimating}
               paused={
-                pageAnimating ||
+                !readerReady ||
                 viewerInteracting ||
                 bookmarkMenuOpen ||
                 Boolean(readerError)
