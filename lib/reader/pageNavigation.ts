@@ -9,11 +9,12 @@ export function pageTurnForGesture(
   direction: "left" | "right",
   source: GestureSource,
 ): "nextPage" | "previousPage" {
-  const movesForward =
-    source === "headTilt"
-      ? direction === "right"
-      : direction === "left";
-  return movesForward ? "nextPage" : "previousPage";
+  // Both inputs follow reading direction in the mirrored setup preview.
+  switch (source) {
+    case "headTilt":
+    case "palmSwipe":
+      return direction === "right" ? "nextPage" : "previousPage";
+  }
 }
 
 export function pageTurnTarget(

@@ -482,7 +482,7 @@ test.describe("Gesture Reader", () => {
     await expect(page.getByText("Practice mode · gestures won’t turn pages")).toBeVisible();
     await page.getByRole("button", { name: "Close gesture setup" }).click();
     await expect(page.getByRole("button", { name: "Gesture controls", exact: true })).toBeFocused();
-    await page.evaluate(() => (window as unknown as { __emitGesture(direction: "left"): void }).__emitGesture("left"));
+    await page.evaluate(() => (window as unknown as { __emitGesture(direction: "right"): void }).__emitGesture("right"));
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Previous page", exact: true }).click();
     await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
@@ -651,11 +651,31 @@ test.describe("Gesture Reader", () => {
             includeCooldown?: boolean,
           ): void;
         }
-      ).__emitGesture("left", true);
+      ).__emitGesture("right", true);
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
     await expect(page.getByText("Now on page 2", { exact: true })).toBeVisible();
     await expect(page.getByText(/Page turned —/)).toHaveCount(0);
+
+    // Check both palm directions and the optional reversal against real PDF.js.
+    for (const [inverted, direction, target] of [
+      [false, "left", 1],
+      [false, "right", 2],
+      [true, "left", 3],
+      [true, "right", 2],
+    ] as const) {
+      await page.waitForTimeout(350);
+      await page.getByLabel("Reverse page-turn direction").setChecked(inverted);
+      await expect(page.getByText(inverted
+        ? /Left swipe advances; right swipe goes back/
+        : /Right swipe advances; left swipe goes back/)).toBeVisible();
+      await page.evaluate((direction) =>
+        (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture(direction), direction);
+      await expect(page.getByText(`Page ${target} of 3`, { exact: true })).toBeVisible();
+      await expect(page.getByText(`Now on page ${target}`, { exact: true })).toBeVisible();
+    }
+    await page.waitForTimeout(350);
+    await page.getByLabel("Reverse page-turn direction").uncheck();
 
     await page.waitForTimeout(350);
     const cameraRequestsBeforeHeadMode = await page.evaluate(
@@ -822,7 +842,7 @@ test.describe("Gesture Reader", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Gesture controls", exact: true })).toBeFocused();
     await page.evaluate(() =>
-      (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("left"));
+      (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("right"));
     await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Previous page", exact: true }).click();
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
@@ -871,7 +891,7 @@ test.describe("Gesture Reader", () => {
             includeCooldown?: boolean,
           ): void;
         }
-      ).__emitGesture("left", true);
+      ).__emitGesture("right", true);
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "0 saved" }).click();
@@ -887,7 +907,7 @@ test.describe("Gesture Reader", () => {
             includeCooldown?: boolean,
           ): void;
         }
-      ).__emitGesture("left", true);
+      ).__emitGesture("right", true);
     });
     await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
     await expect(page.getByText("Now on page 3", { exact: true })).toBeVisible();

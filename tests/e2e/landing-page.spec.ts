@@ -11,6 +11,7 @@ test("the landing page explains controls without requesting the camera", async (
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Choose your first PDF", exact: true })).toBeEnabled();
   await expect(page.getByText("Right → next page. Left → previous page.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Hold still to lock, then swipe right → next or left → previous.", { exact: true })).toBeVisible();
   await expect(page.getByText("Camera stays off until you enable gestures.", { exact: false })).toBeVisible();
   await expect(page.getByText("Fit whole page for hands-free reading", { exact: false })).toBeVisible();
   for (const width of [1440, 390, 280]) {

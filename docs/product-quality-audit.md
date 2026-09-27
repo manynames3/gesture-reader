@@ -1066,9 +1066,35 @@ the renderer's usable viewport is 180×224 CSS pixels.
   watch module. The QA command explicitly enables bundling for the Pages shim;
   no application dependency or production Worker is added to the static site.
 
+## September 27, 2026: palm page-direction correction
+
+The page router still used the original left-to-next palm mapping, opposite to
+head tilt. Updated the requested default so both inputs map **right to next**
+and **left to previous**. The worker's motion detection, neutral reset,
+calibration's physical left/right checks and exact-page acknowledgement are
+unchanged. The optional Reverse page-turn direction setting still flips both
+directions; saved preferences are not silently reset.
+
+Updated setup hints, the landing arrow/direction guide and README. Unit tests
+cover both sources. The fake-camera flow now checks confirmed palm turns in
+both directions, optional reversal, and unchanged head-tilt behavior against
+real PDF.js. This is a routing correction, not new physical-camera accuracy
+evidence. Earlier direction descriptions are historical, not current defaults.
+The native regression run also caught a QA-only fault-injection race: creating
+the catalog blocker while the app's temporary catalog file still existed failed
+with EEXIST. The test now retries the atomic directory acquisition until the
+normal rename finishes, without deleting the app's live temporary file. No
+production storage behavior was changed for that test failure.
+Validation: 145 unit tests, four targeted Chromium and four WebKit flows,
+eight Electron checks, ten Pages export checks and two rendered-output checks
+passed. The corrected disk-failure injection separately passed three concurrent
+repeats. Lint, TypeScript and whitespace checks passed. This was a targeted
+follow-up, not a rerun of every general-suite case or a rebuilt installer.
+
 ## Verification commands
 
-Latest complete pass: lint and TypeScript succeeded; **144 unit tests, 2 rendered
+Previous complete general-suite pass, before the palm-direction follow-up:
+lint and TypeScript succeeded; **144 unit tests, 2 rendered
 output checks, 60 Chromium tests, 58 WebKit tests, 8 production-browser tests,
 and 8 Electron tests passed (280 checks total)**. Two Chromium-only quota cases are
 explicitly skipped in WebKit. Both web and

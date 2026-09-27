@@ -14,11 +14,9 @@ describe("reader core", () => {
     expect(pageTurnTarget(5, 10, "previousPage")).toBe(4);
   });
 
-  it("maps head tilts to reading direction independently of palm swipes", () => {
-    expect(pageTurnForGesture("right", "headTilt")).toBe("nextPage");
-    expect(pageTurnForGesture("left", "headTilt")).toBe("previousPage");
-    expect(pageTurnForGesture("left", "palmSwipe")).toBe("nextPage");
-    expect(pageTurnForGesture("right", "palmSwipe")).toBe("previousPage");
+  it.each(["headTilt", "palmSwipe"] as const)("maps %s right to next and left to previous", (source) => {
+    expect(pageTurnForGesture("right", source)).toBe("nextPage");
+    expect(pageTurnForGesture("left", source)).toBe("previousPage");
   });
 
   it("routes navigation through one acknowledged command bus", async () => {
