@@ -1,4 +1,5 @@
 export type ReaderCommand =
+  | { type: "fitPage"; source: "button" }
   | {
       type: "nextPage" | "previousPage";
       source: "gesture" | "keyboard" | "button";
@@ -7,6 +8,18 @@ export type ReaderCommand =
       type: "goToPage";
       page: number;
       source: "bookmark" | "search" | "input";
+    };
+
+export type NavigationResult =
+  | {
+      status: "confirmed";
+      from: number;
+      to: number;
+    }
+  | {
+      status: "rejected";
+      reason: "boundary" | "busy" | "notReady" | "timeout";
+      page?: number;
     };
 
 export type ReaderLayout = "single" | "continuous" | "spread";
@@ -39,7 +52,7 @@ export interface ImportablePdf {
 }
 
 export interface ImportResult {
-  status: "imported" | "duplicate" | "rejected";
+  status: "imported" | "restored" | "duplicate" | "rejected";
   record?: DocumentRecord;
   message?: string;
 }
@@ -58,6 +71,8 @@ export interface StorageEstimate {
   usage: number;
   quota: number;
   persisted: boolean;
+  recovery?: { restored: number; rebuilt: number; skipped: number; retained?: number };
+  backupUnavailable?: boolean;
 }
 
 export interface LibraryRepository {
@@ -72,10 +87,12 @@ export interface LibraryRepository {
 }
 
 export type GestureSensitivity = "low" | "medium" | "high";
+export type GestureInputMode = "palm" | "head";
 
 export interface GestureSettings {
   deviceId?: string;
   sensitivity: GestureSensitivity;
+  mode: GestureInputMode;
   inverted: boolean;
   showPreview: boolean;
 }
@@ -86,20 +103,33 @@ export type GestureStatus =
   | "loading"
   | "ready"
   | "hand"
+  | "head"
   | "cooldown"
   | "paused"
   | "error";
 
 export type GestureEvent =
   | { type: "status"; status: GestureStatus; message?: string }
-  | { type: "gesture"; direction: "left" | "right"; confidence: number }
+  | {
+      type: "gesture";
+      source: "palmSwipe" | "headTilt";
+      direction: "left" | "right";
+      confidence: number;
+    }
   | {
       type: "metrics";
+      mode: GestureInputMode;
       fps: number;
       confidence: number;
       handPresent: boolean;
       armProgress: number;
-      status: "ready" | "hand" | "cooldown";
+      facePresent: boolean;
+      rollDegrees: number;
+      neutralRollDegrees: number;
+      holdProgress: number;
+      holdDirection?: "left" | "right";
+      headState?: "calibrating" | "ready" | "holding" | "cooldown";
+      status: "ready" | "hand" | "head" | "cooldown";
     };
 
 export interface GestureEngine {
@@ -110,6 +140,7 @@ export interface GestureEngine {
 
 export interface DesktopLibraryBridge {
   isDesktop: true;
+  onAddPdfs?(listener: () => void): () => void;
   list(): Promise<DocumentRecord[]>;
   pickAndImport(): Promise<ImportResult[]>;
   importBytes(files: Array<{ name: string; bytes: ArrayBuffer }>): Promise<ImportResult[]>;

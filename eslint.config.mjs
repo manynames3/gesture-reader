@@ -15,12 +15,15 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    ".wrangler/**",
     "out/**",
     "build/**",
     "dist/**",
     "electron-dist/**",
     "public/vendor/**",
     "outputs/**",
+    "test-results/**",
+    "playwright-report/**",
     "tmp/**",
     "work/**",
     "next-env.d.ts",

@@ -1,10 +1,14 @@
 # Gesture Reader
 
-![Gesture Reader — turn PDF pages with an open-palm swipe](public/og.png)
+[Open the web reader](https://gesture-reader.pages.dev) · [Source code](https://github.com/manynames3/gesture-reader) · [Quality audit and remaining checks](docs/product-quality-audit.md)
+
+![Gesture Reader — turn PDF pages without touching the computer](public/og.png)
 
 Gesture Reader is a local-first PDF library and reader for the web and macOS.
-It turns one page at a time when the computer's camera recognizes an open-palm
-swipe—all vision processing happens on the device.
+It turns one page at a time when the computer's camera recognizes either an
+open-palm swipe or a deliberate head tilt—all vision processing happens on the
+device. Tilt your head right to advance or left to go back; palm swipes keep
+the familiar left-to-advance, right-to-go-back motion.
 
 The application combines the complete PDF.js reading experience with an
 intentional, conservative gesture state machine. PDFs, thumbnails, reading
@@ -27,10 +31,24 @@ navigation.
 The project follows three principles:
 
 1. **Local by default.** Documents and camera data stay on the device.
-2. **One gesture, one result.** A recognized swipe turns exactly one page and
-   never wraps at document boundaries.
+2. **One gesture, one confirmed result.** A recognized swipe or tilt requests
+   exactly one page, never wraps, and is reported as successful only after
+   PDF.js confirms the exact target page.
 3. **A real PDF reader first.** Gesture support sits beside search, selection,
    thumbnails, outlines, print, download, zoom, rotation, and multiple layouts.
+
+## Recent improvements
+
+- Responsive reader and compact gesture setup, with an explicit **Fit whole page** action.
+- Page-turn success shown only after PDF.js confirms the requested page; recoverable camera/model failures have retry controls.
+- Keyboard focus restoration, accessible dialogs, clearer camera-off controls, and better narrow-window behavior.
+- Offline web startup and cache repair, safer import/quota recovery, and desktop catalog recovery without touching original PDFs.
+- Streamed desktop PDF reads and disk-staged native imports to reduce memory amplification for large documents.
+
+This is still a personal-use project, not an App Store-qualified release.
+Automated checks use synthetic camera streams. Reliable physical swipes/head tilts,
+real camera permission behavior, and complete screen-reader coverage still need
+hands-on testing. No claim of “works every time” is made.
 
 ## What it can do
 
@@ -56,11 +74,15 @@ The project follows three principles:
 ### Gesture controls
 
 - Opt-in video permission with internal or external camera selection.
+- Choice of responsive palm-swipe or hands-free head-tilt control.
+- Source-aware page directions: right head tilt advances and left head tilt
+  goes back, while palm swipes retain their natural opposite mapping.
 - Mirrored preview, sensitivity settings, direction inversion, and a
   two-direction calibration check.
 - Visible confidence, palm-lock, cooldown, and reset feedback.
-- Recognition pauses during dialogs, text entry, page animation, window blur,
-  or backgrounding.
+- Recognition pauses during dialogs, text entry, window blur, or backgrounding.
+  While a page turn is pending, camera frames keep flowing so the detector can
+  observe the required hand/head reset, but extra turn events are suppressed.
 - Camera tracks are stopped immediately when gestures are disabled or the app
   is hidden or closed.
 
@@ -78,14 +100,15 @@ flowchart LR
     C["Camera frames"]
   end
 
-  C --> W["Gesture Web Worker"]
-  W --> M["MediaPipe Gesture Recognizer"]
-  M --> S["Swipe state machine"]
+  C --> W["On-device vision worker"]
+  W --> M["MediaPipe hand or face task"]
+  M --> S["Swipe or head-tilt state machine"]
   S --> Q["Typed reader command bus"]
   K --> Q
   B --> Q
   Q --> A["PDF.js adapter"]
   A --> V["Full PDF.js viewer"]
+  V -. "exact-page confirmation" .-> A
 
   R["LibraryRepository"] --> IDB["Web: IndexedDB"]
   R --> IPC["macOS: narrow IPC bridge"]
@@ -104,7 +127,11 @@ All navigation enters a `ReaderCommand` bus. Buttons, keyboard shortcuts,
 bookmarks, page input, and recognized gestures issue the same typed commands.
 Gesture code never reaches into PDF.js directly, which keeps page-boundary
 behavior testable and prevents camera logic from becoming coupled to the
-viewer.
+viewer. The gesture source stays attached until command routing, allowing head
+tilts and palm swipes to use different, explicit direction mappings. Command
+delivery is asynchronous: the adapter returns `confirmed`, `boundary`,
+`notReady`, `busy`, or `timeout`, so the camera UI cannot mistake detector
+cooldown for a completed page turn.
 
 ### PDF integration
 
@@ -113,28 +140,57 @@ The project embeds the full PDF.js viewer through the pinned
 A small adapter listens to PDF.js event-bus events for document lifecycle,
 page, scale, rotation, scroll mode, and spread mode changes. This preserves
 PDF.js features while isolating its internal APIs from the rest of the
-application.
+application. Page turns are computed from PDF.js's live page state, retried once
+with the same absolute target if necessary, and succeed only when the adapter
+observes PDF.js's matching visible-page `updateviewarea` event. A relative
+`next` or `previous` command is never issued twice.
 
 ### Gesture pipeline
 
 When gestures are enabled, the app captures video-only frames at approximately
-640×480 and submits them to a dedicated worker. Only one frame may be in flight,
-so a busy recognizer drops incoming frames instead of creating latency.
-MediaPipe's Gesture Recognizer and its WASM/model assets are bundled locally.
+640×480 and submits them to a dedicated worker. Only one frame may be in
+flight, so a busy recognizer drops incoming frames instead of creating latency.
+MediaPipe's Gesture Recognizer, Face Landmarker, WASM, and both model assets are
+bundled locally. Palm and head control are exclusive modes, so the application
+never runs both models over the same frame. Switching modes replaces only the
+vision worker; the camera stream stays connected.
 
 The deterministic swipe detector then:
 
-1. Arms after `Open_Palm` confidence reaches at least `0.70` in three of four
-   frames.
-2. Tracks horizontal palm-center motion for 120–450 ms.
-3. Requires displacement of 14–22% of frame width, depending on sensitivity.
-4. Requires horizontal motion to exceed twice the vertical drift.
-5. Tolerates brief classifier blur while visible hand landmarks keep moving.
-6. Emits one direction, then requires a neutral reset and 700–900 ms cooldown.
+1. Arms after three of four stationary `Open_Palm` frames. A velocity gate keeps
+   an entering hand from counting as a swipe; the confidence threshold ranges
+   from `0.55` in Quick mode to `0.70` in Steady mode.
+2. Tracks palm-center motion for 65–700 ms, depending on sensitivity.
+3. Requires horizontal displacement of 10–18% of frame width plus consistent
+   movement in the detected direction. Balanced mode has a velocity-qualified
+   10% fast path, allowing a deliberate swipe to turn on its second motion
+   frame without weakening the slow-movement and spike rejection gates.
+4. Compares horizontal travel with the full vertical path, rejecting spikes,
+   deep arcs, and ordinary hand repositioning.
+5. Uses finger-extension geometry after lock, tolerating classifier blur while
+   canceling a closed fist. A dropped landmark frame re-anchors the trajectory
+   and requires fresh continuous movement.
+6. Emits exactly one direction, then latches until a hand-out or neutral
+   recenter and a 700–900 ms cooldown.
 
-This hybrid approach uses ML for hand and open-palm recognition, but a
-transparent state machine for the page-turn decision. The thresholds are easy
-to reason about, calibrate, and unit-test.
+Head mode derives mirrored-preview roll from the eye line reported by Face
+Landmarker. It learns the reader's comfortable centered position, then requires
+a 10–15° tilt held for 220–420 ms depending on sensitivity. A tilt emits one
+page turn, latches through cooldown, and cannot fire again until the reader
+returns to the learned neutral band. Short spikes, oscillation, face loss, and
+remaining tilted are rejected; **Recenter head position** explicitly relearns
+the baseline. A right tilt issues the next-page command; a left tilt issues the
+previous-page command. This mapping is separate from palm swipes, where left
+means next and right means previous.
+
+This hybrid approach uses ML for hand, open-palm, and face-landmark recognition,
+but transparent state machines for page-turn decisions. The thresholds are
+easy to reason about, calibrate, and replay at different camera frame rates.
+The camera loop preserves source aspect ratio, never queues duplicate frames,
+and discards late gesture results whenever the reader is paused. It continues
+processing reset frames while an acknowledged page request is pending, which
+prevents a palm or head returned to neutral during the turn from leaving the
+detector stuck in cooldown.
 
 ## Architectural decisions
 
@@ -144,29 +200,55 @@ to reason about, calibrate, and unit-test.
 | Share React/TypeScript across web and desktop | Reader behavior, gesture UX, and tests remain consistent across both surfaces. | Platform differences must stay behind explicit interfaces. |
 | Package macOS with Electron | Chromium provides predictable behavior for PDF.js, camera APIs, workers, WebAssembly, and the existing React renderer. | The application bundle is larger than a native or Tauri build. |
 | Keep recognition in a worker | Camera inference cannot block PDF scrolling or UI interaction. | Frames and worker lifecycle require careful coordination. |
-| Use a deterministic swipe state machine | Lock, displacement, direction, cooldown, and false-positive behavior can be tested without retraining a model. | Thresholds still need physical calibration for different cameras and lighting. |
+| Use deterministic motion state machines | Palm lock, displacement, head hold, neutral reset, cooldown, and false-positive behavior can be tested without retraining a model. | Thresholds still need physical calibration for different cameras, posture, and lighting. |
+| Acknowledge page turns through PDF.js | The UI says a page opened only after the viewer confirms the exact target; a dropped command can no longer look successful. | Each turn may wait briefly for confirmation and performs one safe absolute-page retry before reporting failure. |
 | Keep web and macOS libraries separate | No account, backend, or synchronization service is required; privacy boundaries stay obvious. | Reading state does not move automatically between installations. |
 | Copy desktop imports into managed storage | The application can offer a stable library and safe removal without mutating the original file. | Imported PDFs consume additional local disk space. |
-| Self-host runtime assets | The reader launches offline and camera/PDF processing has no runtime CDN dependency. | Builds are larger, and the pinned model must be updated intentionally. |
+| Self-host runtime assets | The reader launches offline and camera/PDF processing has no runtime CDN dependency. | Builds are larger, and the pinned models must be updated intentionally. |
 
 ## Storage and privacy model
 
 ### Web
 
-- PDF blobs, metadata, thumbnails, bookmarks, and reading state are stored in
+- PDF bytes, metadata, thumbnails, bookmarks, and reading state are stored in
   IndexedDB.
+- New PDF copies use byte buffers to avoid WebKit Blob-write failures; existing
+  Blob-based copies remain readable without migration or deletion.
 - The app requests persistent browser storage after a successful import.
 - Opening a PDF creates a temporary object URL that is revoked after use.
 - Browser storage remains subject to the browser's quota and eviction policy.
+- If a managed copy goes missing, add the original PDF again. Its matching
+  SHA-256 fingerprint restores the copy without resetting bookmarks or progress.
+  This works in both web and macOS libraries; removing an item still deletes its
+  saved state, so reimport instead of removing when recovering a missing file.
 
 ### macOS
 
 - Imported PDFs are copied under Electron's application-data directory.
 - Metadata lives in a versioned JSON catalog written through a temporary file
-  and atomic rename.
-- A corrupt catalog is preserved for recovery rather than silently overwritten.
+  and atomic rename. Successful commits also update an extra local recovery
+  copy. This is on-device redundancy, not protection against losing the drive.
+- A damaged or missing catalog is restored from that recovery copy when valid.
+  When only some records are damaged, healthy entries retain their latest titles,
+  pages and bookmarks; backup records repair only the damaged identities. A stale
+  backup does not overwrite healthy state or reintroduce unrelated removed entries.
+  Without usable metadata, the app rebuilds entries from its managed PDF files,
+  assigns recovery titles and starts them on page 1. It reports which reading
+  state could be kept; it does not pretend lost bookmarks were restored.
+- Damaged catalogs and unsupported copies are preserved. Recovery scans only
+  real files with app-managed UUID names, never original files or symlinks.
+  If the extra catalog copy cannot be updated, the saved library stays usable
+  and a visible Retry backup action is offered. An interrupted update or backup
+  failure can leave the recovery copy older than the primary catalog.
 - PDFs are served to PDF.js through an allowlisted `gesture-reader://` protocol
-  with byte-range support.
+  with byte-range support and bounded streaming, rather than whole-file response
+  buffers. Native dialog imports are staged on disk and hashed in chunks.
+
+Both import surfaces reject files above the existing 500 MB local limit before
+reading their complete bytes. Web and desktop drag-and-drop check the PDF header
+first. Desktop drag-and-drop submits one file at a time rather than holding a
+whole batch of large PDFs in both renderer and main-process memory. Individual
+failures do not prevent the remaining files from being imported.
 
 There is no account system, cloud sync, telemetry, analytics pipeline, or
 remote-PDF URL loader. The Content Security Policy restricts runtime resources
@@ -222,6 +304,27 @@ npm run start
 The web surface is an installable PWA. Its library belongs to that browser
 profile and is not synchronized with the desktop application.
 
+The public Cloudflare Pages deployment uses a static export, with no document
+upload API or server-side camera processing:
+
+```bash
+npm run build:pages
+npm run test:pages
+npx wrangler pages deploy dist/client --project-name gesture-reader --branch main
+```
+
+`build:pages` regenerates the offline manifest after exporting the shell. Deploy
+only `dist/client`, not the checkout, desktop installer, test fixtures, or server
+build. The default `build` retains the separate Worker/server-rendered hosting
+target; Electron also exports a static renderer. These targets share source,
+but their generated output is not interchangeable.
+The optional `test:pages` checks the exported files in Chromium and WebKit,
+including offline reading/model startup, cache repair and update approval.
+It uses Wrangler's local Pages server to exercise static routing and response headers.
+
+After an update, existing PWA tabs may keep the previous version until you choose
+**Update app and reload** in the library or close the old tabs.
+
 ### macOS
 
 ```bash
@@ -232,7 +335,48 @@ Electron Forge writes the `.app`, `.dmg`, and `.zip` under `out/`. The current
 personal-use release is ad-hoc signed but not notarized or distributed through
 the Mac App Store.
 
+The package contains the static renderer and desktop bridge, not a second copy
+of the public assets or the web server. The native window can be resized to a
+compact desk view. Both renderer CSP and the Chromium session restrict runtime
+requests to local app/data/blob resources.
+
+The native **File → Add PDFs…** menu (⌘O) uses the same local import flow as the
+library button, including while reading. Canceling keeps your current page and
+bookmarks; import progress and failures remain visible in the reader. Interface
+zoom is labeled separately from PDF zoom. Packaged builds do not expose Reload
+or Developer Tools in the menu.
+
+Interface zoom and short windows keep camera-off controls reachable. On very
+short windows, gesture setup uses a full-window dialog with scrolling options
+and keyboard focus containment. Extremely narrow reader controls keep their
+accessible names, and the PDF viewer/search/tools adapt to the actual viewport.
+Page Fit search keeps the matched whole page visible rather than scrolling back
+to the preceding page.
+
+After making the DMG, run the separate macOS package check:
+
+```bash
+npm run test:packaged
+```
+
+It mounts the DMG read-only, verifies the ad-hoc signature and all runtime assets,
+copies the app into a temporary Applications folder outside the checkout, and
+uses an isolated library. It exercises offline launch, PDF import and range
+reads, both real recognition models with synthetic video, camera release,
+restart/state restoration, compact native sizing, and managed-copy removal.
+The temporary installation/profile is cleaned up; the DMG and test reports stay.
+This does not prove Gatekeeper/notarization, real camera permission behavior,
+physical gesture accuracy, or printer behavior.
+
 ## Using gestures
+
+For hands-free reading, select **Fit whole page** in gesture setup to see the
+entire current page without scrolling. This keeps the current page, rotation,
+layout and bookmarks, and remembers Page Fit for this document. Opening setup
+never changes your existing zoom by itself; the PDF zoom menu still provides
+Page Width and other choices for closer reading.
+
+### Palm swipe
 
 1. Open a PDF and select **Enable gestures**.
 2. Choose the camera and position your full wrist and all five fingers inside
@@ -241,9 +385,38 @@ the Mac App Store.
 4. Swipe left to go to the next page or right to go to the previous page.
 5. Move the hand out of view briefly after a turn so the detector can reset.
 
-If mirrored movement feels backward, enable **Reverse swipe direction**. The
+### Head tilt
+
+1. Select **Head tilt** under **Control method**.
+2. Look comfortably toward the screen while the camera learns your center.
+3. Tilt **right for the next page** or **left for the previous page** by roughly
+   12–15°, then hold until the progress reaches 100%.
+4. Return fully to center before the next page turn.
+5. Select **Recenter head position** after moving the camera or changing your
+   reading posture.
+
+If movement feels backward, enable **Reverse page-turn direction**. The
 two-step calibration check confirms both directions without turning document
-pages.
+pages. You can cancel it at any time. Closing setup also ends the check, so
+normal gesture page turns resume. **Turn off gestures** is always visible at the
+bottom of setup and releases the camera; closing setup alone keeps it enabled.
+
+## Offline reading and updates
+
+On the web, the first visit prepares an approximately **33 MB** offline bundle
+from the same origin: the app, full PDF viewer, fonts, WASM, and both gesture
+models. Wait for **Ready offline** in the library before disconnecting. You can
+then reopen the app, import local PDFs, and enable either gesture mode offline.
+Camera permission is still requested only when you enable gestures.
+
+Offline setup failures have a retry action. If the browser evicts cached app
+files, retrying restores them without deleting the separate PDF library. Browser
+storage may still be cleared by the browser or user; keep your original PDFs.
+
+Downloaded updates wait while existing tabs are open. Choose **Update app and
+reload** from the library when ready, or close the app's tabs to allow the new
+version to activate. The macOS app packages its runtime assets locally and does
+not use the browser's offline cache.
 
 ## Keyboard and conventional controls
 
@@ -264,25 +437,186 @@ npx tsc --noEmit
 
 The test suite covers:
 
-- Gesture arming, jitter, vertical movement, confidence loss, motion blur,
-  cooldown, neutral reset, boundaries, and repeated-frame suppression.
+- Palm arming, jitter, vertical movement, confidence loss, motion blur,
+  responsive fast-path recognition, cooldown, neutral reset, boundaries, and
+  repeated-frame suppression.
+- Head-roll geometry, neutral calibration, deliberate holds at 8/12/18 FPS,
+  face loss, posture drift, spike rejection, cooldown, return-to-center, noisy
+  right-to-left sequences, and source-aware page-direction routing.
 - Web import, SHA-256 deduplication, IndexedDB state, removal, and quota errors.
-- Desktop catalog recovery, managed storage, and reading-state persistence.
+- Rejected/stalled storage estimates leave reading and import usable; unavailable
+  capacity is shown honestly. Optional persistence failures never invalidate or
+  stall a completed import. A temporary normal Chromium profile exercises an
+  actual IndexedDB quota failure, rollback and same-page retry, without filling
+  the computer's disk or touching a real browser profile. A second actual-quota
+  flow removes an unused copy through the UI, then retries without relaxing the
+  quota; another PDF's saved page/bookmarks and the source file remain unchanged.
+- Keyboard removal keeps focus on the next visible card, previous card, Search
+  or Add PDFs. A slow catalog refresh does not steal focus after the user moves
+  elsewhere. Chrome/WebKit, native Mac and installed-copy checks cover these paths.
+  Small/short library windows keep feedback in the page layout instead of hiding
+  the focused control beneath a floating notification.
+- Desktop catalog recovery, managed storage, reading-state persistence, failed
+  catalog-write rollback, and restart recovery for interrupted removal. Native
+  restart tests cover damaged/missing catalogs, retained pages/bookmarks, honest
+  state-loss reporting, and an extra backup-write failure with a working retry.
 - PDF navigation and legacy zoom-state repair.
-- Browser flows with real PDF bytes and a fake local camera stream.
+- Footer search keeps the matched page selected at page-width, numeric and
+  page-fit zoom, including bookmark/reopen. Switching to native Page Fit after
+  a footer match retains that page, including in short windows. The viewer's
+  worker and font/map URLs are resolved against the application origin so PDF
+  parsing uses a real background worker without breaking CJK text, including
+  offline on macOS.
+- Original imported filenames in native PDF details and downloads, including
+  Unicode/punctuation, document switching, reopen and page reload. Downloads
+  remain byte-identical, including password-protected files; native Mac and
+  installed-copy checks save only to isolated QA directories.
+- Long-filename details remain contained in wide/short and narrow windows, with
+  wrapping fields, scrolling and a visible keyboard-accessible Close action.
+- Exact-page navigation acknowledgement, absolute-target retry, timeout,
+  concurrent-turn rejection, reader disposal, and truthful success feedback.
+- Browser flows with real PDF bytes, a fake local camera stream, mode switching
+  without a second camera request, pause/resume races, confirmed palm/head page
+  turns, and the real bundled Face Landmarker model.
+- Actual local-model failure and retry in both modes, switching away from a failed
+  method without false readiness, stalled inference with camera release and stale
+  result rejection, and reading-position preservation during window resizing.
 - Electron startup, isolated IPC, secure protocol, and managed PDF storage.
+- Real native PDF import, bookmark retention across page turns, narrow-window
+  page fitting, password prompts, malformed PDFs, partial imports, and explicit
+  recovery from failed storage saves and denied camera access.
+- Compact native password retry/cancel, scrolling document details, accessible
+  dialog names and print-preparation cancellation. Both browser engines and
+  real Electron 200% interface zoom exercise native PDF.js dialogs. No test
+  sends a print job or certifies actual screen-reader speech.
+- Native dialog pause/resume while focus remains inside the PDF iframe, without
+  incorrectly treating it as leaving the app; document focus loss still pauses
+  gestures and returning focus resumes them.
+- A synthetic 120-page PDF with selectable text, an image-only scan, Japanese,
+  Chinese and Korean text, natural rotation, mixed page sizes, outline links,
+  distant search highlighting, layout restoration, fullscreen, print preparation,
+  and byte-identical downloads. PDF analysis workers are checked for cleanup on
+  encrypted and malformed imports. Editing, split/merge and PDF scripting are
+  disabled through the native viewer options, not only hidden controls.
+- Print preparation verifies all three fully loaded 150-DPI page images at the
+  native-print checkpoint and retains lifecycle/encoding diagnostics. The wait
+  accounts for Chromium's PNG idle-encoding fallback under parallel-test load;
+  no print job is sent, and this does not certify actual printer behavior.
+- Worker startup/inference watchdogs and rejection of late results after failure.
+- Keyboard import/open/return, exact library focus restoration, empty and saved
+  bookmark navigation, setup shortcut isolation, native PDF search and iframe
+  focus exits. Full-screen setup blocks covered reader/PDF focus and page turns,
+  keeps both-mode calibration available, and restores controls when closed or
+  resized. Reset rejects recognition already in flight; scrolling options never
+  moves the setup header or camera-off footer. Narrow-reader 200% text, selected contrast and control targets,
+  and reduced motion in both the app and PDF iframe also have checks. These
+  targeted checks are not a complete screen-reader or accessibility certification.
+- Production offline bootstrap, PDF import and reading after disconnection,
+  real palm/head model startup without network access, cache-eviction repair,
+  user-approved updates, and a fallback when service workers are unsupported.
 - Rendered application metadata and self-hosted runtime assets.
 
-Automated browser tests currently run against Chromium. Physical camera testing
+Install the matching test browsers with `npx playwright install chromium webkit`.
+`npm run test:e2e:webkit` runs the Safari-engine reader flows separately.
+
+Automated browser tests run against Chromium and Playwright WebKit, including
+production offline/update flows. WebKit coverage is not proof of every installed
+Safari version or macOS permission behavior. Physical camera testing
 is still important because framing, lighting, motion blur, and external-camera
 drivers vary.
+
+See the [product-quality audit](docs/product-quality-audit.md) for verified
+improvements and outstanding release-quality gates. This audit deliberately does
+not treat synthetic gesture tests as proof of physical camera reliability.
+
+### Optional large-document and sustained-model checks
+
+The small 120-page corpus is not a large-byte performance benchmark. Generate
+the separate scan-heavy fixture with authoring-only Python packages `reportlab`,
+`Pillow`, `numpy`, and `pypdf` available, then run:
+
+```sh
+python3 scripts/build-performance-pdf.py
+python3 scripts/build-vector-performance-pdf.py
+npm run test:performance
+```
+
+This builds a deterministic, roughly 62 MiB, 32-page image-only practice book
+under `output/pdf/`, not a PDF padded with unused bytes. The generated file is
+ignored by Git and is never bundled into the deployed reader. The generation
+packages are not application dependencies.
+
+The second recipe generates a roughly 23 MiB, 16-page vector-heavy chart report
+with visible paths, clipping, transparency, selectable text and outlines. Its
+checks cover completed-page turns, distant footer search, bookmark/reopen and
+actual background-worker use. JSON reports retain frame gaps and phase timings.
+Neither synthetic fixture certifies every real-world PDF or machine.
+
+Both browser engines run at 2x pixel density. JSON reports record import,
+completed-page rendering/turn latency, animation-frame gaps and slow canvas
+operations. The page check waits for native PDF.js rendering completion and a
+paint opportunity; its `data-loaded` attribute alone marks the start of drawing.
+Broad 5-second import/open and 750ms turn smoke budgets detect large regressions
+on the test machine, not a universal performance guarantee.
+
+The suite also runs the actual bundled palm/head models for 20 seconds per mode
+against a synthetic 1080p, 30 FPS camera while turning pages in that book, using
+both native bitmap resizing and the bounded canvas fallback. It checks
+bounded in-flight frames, inputs no larger than 640×480, model switching without another camera
+request, continued manual control, worker termination and camera release.
+This is a processing-pipeline test, not human recognition, long-session memory,
+thermal or physical-camera acceptance. Reports are under `test-results/performance/`.
+
+For the separate near-limit and repeated-library stress checks, also generate
+the 256-page variant and run:
+
+```sh
+python3 scripts/build-performance-pdf.py --pages 256
+npm run test:stress
+```
+
+That variant contains roughly 495.5 MiB of real, unique visible scan images,
+below the app's 500 MiB byte limit. Chromium, WebKit and Electron exercise
+import, finished first/last-page rendering, boundaries, bookmark/reopen and
+source-safe removal; the 32-page variant repeats the complete cycle three times.
+The native dialog selection is deterministic, but imports use the real managed
+storage path and verify both original and copied SHA-256 hashes.
+
+Desktop PDF responses stream in bounded chunks instead of buffering entire
+files in the main process. Native dialog imports copy on disk, then validate and
+stream-hash that staged copy; saved state and duplicate recovery are preserved.
+This uses [Node's built-in streams](https://nodejs.org/api/stream.html) and
+[Electron's response handler](https://www.electronjs.org/docs/latest/api/protocol),
+without a new runtime dependency. Reports are under `test-results/stress/` and
+`test-results/stress-electron/`. Chromium checks post-teardown buffers after
+explicit garbage collection; WebKit does not expose that measurement. Electron
+samples only main-process memory every 200 ms with natural garbage collection.
+These are bounded regression checks, not whole-app peak-memory, physical-camera,
+thermal or long-session qualification.
+
+For a separate native session-length diagnostic, generate the same 32-page
+fixture and run `npm run test:soak`. This takes roughly six minutes: four
+one-minute palm/head phases while painting scanned-page turns, three camera
+restarts, then thirty seconds of idle library time without forced garbage
+collection. The camera is a local synthetic 1080p stream, not your webcam.
+Both actual bundled models run, but the frames contain no hand or face, so the
+check does not establish recognition accuracy or tracked-landmark workload.
+
+Reports under `test-results/soak/` retain completed-frame counts, queue bounds,
+page-turn timings, renderer heap snapshots, and one-second
+[Electron process metrics](https://www.electronjs.org/docs/latest/api/structures/process-metric)
+for browser, renderer, GPU and utility processes. Memory from that API is in
+KiB; sums include shared pages and are not exclusive application memory.
+Lifecycle checks require ended tracks and no live PDF/vision workers after
+returning to the library. CPU/memory observations still require interpretation;
+this diagnostic is not hours-long stability, battery or thermal certification.
 
 ## Project structure
 
 ```text
 app/                         App shell, metadata, CSP, and responsive styles
 components/gesture-reader/   Library, PDF reader, and gesture setup UI
-lib/gesture/                 Worker bridge, MediaPipe worker, swipe detector
+lib/gesture/                 Worker bridge, MediaPipe worker, palm/head detectors
 lib/pdf/                     PDF metadata analysis and zoom normalization
 lib/reader/                  Typed command bus and page-boundary logic
 lib/storage/                 Web and desktop repository adapters

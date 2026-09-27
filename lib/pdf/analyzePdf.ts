@@ -31,8 +31,8 @@ export async function analyzeDocument(
       useWorkerFetch: true,
     });
 
-    const pdf = await loadingTask.promise;
     try {
+      const pdf = await loadingTask.promise;
       const [{ info }, firstPage] = await Promise.all([
         pdf.getMetadata(),
         pdf.getPage(1),
@@ -87,7 +87,9 @@ export async function analyzeDocument(
       await repository.saveDocument(analyzed);
       return analyzed;
     } finally {
-      await pdf.destroy();
+      // A password or malformed-file rejection never creates a document
+      // proxy. Destroy the loading task itself on both success and failure.
+      await loadingTask.destroy();
     }
   } finally {
     source.release();

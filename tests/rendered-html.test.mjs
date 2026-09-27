@@ -37,26 +37,48 @@ test("server-renders the private local-first reader shell", async () => {
   assert.match(html, /Private, hands-free PDFs/);
   assert.match(html, /Add PDFs/);
   assert.match(html, /Your documents and camera frames never leave this device/);
+  assert.match(html, /Right → next page\. Left → previous page\./);
+  assert.match(html, /Camera stays off until you enable gestures/);
+  assert.match(html, /Fit whole page for hands-free reading/);
   assert.match(html, /manifest\.webmanifest/);
   assert.doesNotMatch(html, /fonts\.googleapis|googletagmanager|analytics/i);
 });
 
 test("ships self-hosted PDF, gesture, and PWA assets", async () => {
   const root = new URL("../", import.meta.url);
-  const [manifest, serviceWorker, gestureModel] = await Promise.all([
+  const [manifest, serviceWorker, gestureModel, faceModel] = await Promise.all([
     readFile(new URL("public/manifest.webmanifest", root), "utf8"),
-    readFile(new URL("public/sw.js", root), "utf8"),
+    readFile(new URL("dist/client/sw.js", root), "utf8"),
     readFile(
       new URL(
         "public/vendor/mediapipe/models/gesture-recognizer-float16-v1.task",
         root,
       ),
     ),
+    readFile(
+      new URL(
+        "public/vendor/mediapipe/models/face-landmarker-float16-v1.task",
+        root,
+      ),
+    ),
   ]);
 
   assert.match(manifest, /Gesture Reader/);
-  assert.match(serviceWorker, /gesture-reader-v\d+/);
+  assert.doesNotMatch(serviceWorker, /__OFFLINE_MANIFEST__/);
+  const offline = JSON.parse(serviceWorker.match(/const OFFLINE_BUILD = (.+);/)[1]);
+  assert.match(offline.revision, /^[a-f0-9]{16}$/);
+  assert.ok(offline.bytes > 20_000_000);
+  assert.ok(offline.assets.includes("/"));
+  assert.ok(offline.assets.includes("/vendor/mediapipe/models/gesture-recognizer-float16-v1.task"));
+  assert.ok(offline.assets.includes("/vendor/mediapipe/models/face-landmarker-float16-v1.task"));
+  assert.ok(offline.assets.includes("/vendor/pdfjs/5.5.207/viewer.worker.min.mjs"));
+  assert.ok(offline.assets.some((url) => url.startsWith("/assets/pdfjs-viewer-element")));
+  for (const url of offline.assets) {
+    assert.ok(url.startsWith("/") && !url.startsWith("//"));
+    if (url !== "/") await access(new URL(`dist/client${url}`, root));
+  }
   assert.ok(gestureModel.byteLength > 8_000_000);
+  assert.ok(faceModel.byteLength > 3_700_000);
   await access(
     new URL(
       "public/vendor/mediapipe/0.10.35/wasm/vision_wasm_module_internal.wasm",

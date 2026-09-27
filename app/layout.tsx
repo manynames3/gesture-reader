@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Gesture Reader — Private, hands-free PDFs",
   description:
-    "A local-first PDF reader with on-device camera gestures, search, bookmarks, and reading progress.",
+    "Read PDFs hands-free: tilt right for the next page or swipe an open palm. Private, on-device camera processing, search, bookmarks, and offline reading.",
   applicationName: "Gesture Reader",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
@@ -15,7 +15,8 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     title: "Gesture Reader",
-    description: "Turn PDF pages with an open-palm swipe. Private by design.",
+    description:
+      "Turn PDF pages with an open-palm swipe or head tilt. Private by design.",
     images: [
       {
         url: "/og.png",
@@ -28,7 +29,8 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Gesture Reader",
-    description: "Turn PDF pages with an open-palm swipe. Private by design.",
+    description:
+      "Turn PDF pages with an open-palm swipe or head tilt. Private by design.",
     images: ["/og.png"],
   },
   icons: {
