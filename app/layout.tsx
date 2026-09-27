@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Gesture Reader — Private, hands-free PDFs",
   description:
-    "A local-first PDF reader with on-device camera gestures, search, bookmarks, and reading progress.",
+    "Read PDFs hands-free: tilt right for the next page or swipe an open palm. Private, on-device camera processing, search, bookmarks, and offline reading.",
   applicationName: "Gesture Reader",
   manifest: "/manifest.webmanifest",
   appleWebApp: {

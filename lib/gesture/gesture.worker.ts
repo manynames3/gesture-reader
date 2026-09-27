@@ -337,13 +337,14 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         message.bitmap.close();
       }
     }
-  } catch (error) {
+  } catch {
+    const method = activeMode === "head" ? "head" : "palm";
+    const starting = message.type === "initialize" || message.type === "settings";
     post({
       type: "error",
-      message:
-        error instanceof Error
-          ? error.message
-          : "Hand tracking could not start.",
+      message: starting
+        ? `On-device ${method} tracking could not start. Try camera again, or switch control methods. Page buttons still work.`
+        : `On-device ${method} tracking stopped. Try camera again. Page buttons still work.`,
     });
   }
 };

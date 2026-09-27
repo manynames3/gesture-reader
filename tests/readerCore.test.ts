@@ -88,4 +88,14 @@ describe("reader core", () => {
       await sha256Hex(bytes.buffer),
     );
   });
+
+  it("routes explicit whole-page fitting through the reader without a page turn", async () => {
+    const bus = createReaderCommandBus();
+    const listener = vi.fn(() => ({ status: "confirmed" as const, from: 2, to: 2 }));
+    bus.subscribe(listener);
+    await expect(bus.dispatch({ type: "fitPage", source: "button" })).resolves.toEqual({
+      status: "confirmed", from: 2, to: 2,
+    });
+    expect(listener).toHaveBeenCalledExactlyOnceWith({ type: "fitPage", source: "button" });
+  });
 });

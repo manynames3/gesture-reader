@@ -273,18 +273,18 @@ select:focus-visible {
 .library-hero {
   display: grid;
   width: min(1180px, calc(100% - 3rem));
-  min-height: 35rem;
+  min-height: 29rem;
   grid-template-columns: minmax(0, 1.05fr) minmax(20rem, 0.95fr);
   align-items: center;
   gap: clamp(2rem, 7vw, 7rem);
   margin: 0 auto;
-  padding: 4.7rem 0 5.2rem;
+  padding: 3.5rem 0 4rem;
 }
 
 .library-hero__copy h1 {
   max-width: 720px;
   margin: 0;
-  font-size: clamp(3.3rem, 7vw, 6.8rem);
+  font-size: clamp(3.3rem, 5.8vw, 5.5rem);
   font-weight: 520;
   letter-spacing: -0.075em;
   line-height: 0.86;
@@ -304,6 +304,24 @@ select:focus-visible {
   gap: 1rem;
   margin-top: 2.2rem;
 }
+
+.gesture-start-guide {
+  display: grid;
+  gap: 0.85rem;
+  margin: 1.5rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.gesture-start-guide > div {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+.gesture-start-guide dt { color: var(--lime); }
+.gesture-start-guide dd { margin: 0; color: var(--paper-muted); }
+.library-hero__copy > p.gesture-start-note { font-size: 0.88rem; margin-top: 1.2rem; }
 
 .hero-actions > span {
   color: #918f88;
@@ -530,7 +548,8 @@ select:focus-visible {
 .document-cover__image {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  padding: 0.75rem;
   object-position: top center;
   transition: transform 250ms ease;
 }
@@ -807,7 +826,7 @@ select:focus-visible {
   border-top: 1px solid var(--line);
   color: #777a74;
   font-family: var(--mono);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
 }
 
@@ -869,12 +888,24 @@ select:focus-visible {
 }
 
 .confirm-dialog {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
   width: min(30rem, calc(100% - 2rem));
   border: 1px solid var(--line-strong);
   border-radius: 1.3rem;
   padding: 1.5rem;
   background: var(--ink-soft);
+  color: var(--paper);
   box-shadow: var(--shadow);
+}
+
+.confirm-dialog::backdrop {
+  background: rgba(7, 9, 8, 0.8);
+  backdrop-filter: blur(8px);
+}
+
+.confirm-dialog h2 {
+  overflow-wrap: anywhere;
 }
 
 .confirm-dialog__mark {
@@ -917,22 +948,41 @@ select:focus-visible {
   align-items: center;
   gap: 0.7rem;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: 1rem;
   padding: 0.85rem 1rem;
   background: var(--paper);
   box-shadow: var(--shadow);
   color: var(--ink);
   font-size: 0.8rem;
+  overflow-wrap: anywhere;
+  pointer-events: none;
 }
 
 .toast span {
   display: grid;
   width: 1.5rem;
   height: 1.5rem;
+  flex-shrink: 0;
   place-items: center;
   border-radius: 50%;
   background: var(--lime);
   font-weight: 900;
+}
+
+.toast--error > span { background: var(--red); }
+.toast--info > span { background: var(--blue); }
+.reader-shell .toast { left: 1.25rem; right: auto; bottom: 5.5rem; pointer-events: none; }
+
+/* A floating notification can cover the whole library at real interface zoom.
+   Keep its complete message in flow, directly below the header, on tight views. */
+@media (max-width: 300px), (max-height: 420px) {
+  .library-shell > .toast {
+    position: static;
+    max-width: none;
+    margin: 0.75rem;
+    padding: 0.75rem;
+    align-items: flex-start;
+  }
 }
 
 /* Reader */
@@ -976,7 +1026,8 @@ select:focus-visible {
   gap: 0.1rem;
 }
 
-.reader-document-title strong {
+.reader-document-title h1 {
+  margin: 0;
   overflow: hidden;
   font-size: 0.86rem;
   letter-spacing: -0.02em;
@@ -987,9 +1038,11 @@ select:focus-visible {
 .reader-document-title span {
   color: var(--paper-muted);
   font-family: var(--mono);
-  font-size: 0.58rem;
+  font-size: 0.6875rem;
   text-transform: uppercase;
 }
+
+.reader-page-status__compact { display: none; }
 
 .reader-page-controls {
   border: 1px solid var(--line);
@@ -1027,6 +1080,11 @@ select:focus-visible {
   gap: 0.35rem;
 }
 
+.bookmark-control .text-button {
+  min-height: 2.75rem;
+  padding: 0.5rem;
+}
+
 .bookmark-menu {
   position: absolute;
   top: calc(100% + 0.8rem);
@@ -1034,10 +1092,17 @@ select:focus-visible {
   z-index: 50;
   width: 17rem;
   overflow: hidden;
+  max-height: min(26rem, 65dvh);
+  overflow-y: auto;
   border: 1px solid var(--line-strong);
   border-radius: 0.9rem;
   background: var(--ink-soft);
   box-shadow: var(--shadow);
+}
+
+.bookmark-menu:focus-visible {
+  outline: 3px solid var(--lime);
+  outline-offset: 3px;
 }
 
 .bookmark-menu__header {
@@ -1083,6 +1148,7 @@ select:focus-visible {
   background: var(--red);
   color: #1c0508;
   font-size: 0.76rem;
+  flex-wrap: wrap;
 }
 
 .reader-error button {
@@ -1158,11 +1224,23 @@ select:focus-visible {
   position: relative;
   z-index: 15;
   min-width: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Do not let focus/scrollIntoView move the fixed header and camera-off footer.
+     The options below have their own independent scroll container. */
+  overflow: clip;
   border-left: 1px solid var(--line);
-  padding: 1rem;
+  padding: 0;
   background: #101210;
 }
+
+.gesture-panel__header { padding: 1rem; flex-shrink: 0; }
+.gesture-panel__scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.25rem 1rem 1rem; }
+.gesture-panel__footer { padding: 0.75rem 1rem; border-top: 1px solid var(--line); flex-shrink: 0; }
+.gesture-panel__footer .camera-off { margin: 0; }
+.calibration-mode { margin: 0 0 0.6rem; color: var(--lime); font-size: 0.8rem; }
+.calibration-cancel { min-height: 2.75rem; }
 
 .gesture-panel--collapsed {
   position: absolute !important;
@@ -1175,11 +1253,102 @@ select:focus-visible {
 }
 
 .storage-warning {
-  margin: -34px 50px 42px;
-  color: var(--muted);
+  width: min(1180px, calc(100% - 3rem));
+  margin: -2.5rem auto 2.5rem;
+  color: var(--paper-muted);
   font-size: 0.78rem;
   text-align: right;
 }
+
+.offline-status { width: min(1180px, calc(100% - 3rem)); margin: 1rem auto 2rem; display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: center; }
+.offline-status p { margin: 0; color: var(--paper-muted); font-size: 0.85rem; line-height: 1.6; }
+.offline-status .text-button { min-height: 2.75rem; color: var(--lime); }
+
+/* The returning reader's desk keeps the library in the first screen. */
+.reading-desk {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.75fr);
+  align-items: center;
+  gap: 3rem;
+  width: min(1180px, calc(100% - 3rem));
+  margin: 0 auto;
+  padding: 2.5rem 0;
+}
+
+.reading-desk h1 {
+  margin: 0;
+  font-size: clamp(2.4rem, 4vw, 3.5rem);
+  line-height: 1.04;
+  font-weight: 550;
+  letter-spacing: -0.055em;
+}
+
+.reading-desk > div > p:last-child {
+  margin: 1rem 0 0;
+  max-width: 32rem;
+  color: var(--paper-muted);
+  line-height: 1.6;
+}
+
+.resume-reading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid rgba(217, 255, 98, 0.3);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: linear-gradient(130deg, #23291c, #151a13);
+  color: var(--paper);
+  text-align: left;
+}
+
+.resume-reading:hover { border-color: var(--lime); }
+.resume-reading__cover { flex: 0 0 4rem; height: 5.4rem; overflow: hidden; border-radius: 0.2rem; }
+.resume-reading__cover img { object-fit: cover; padding: 0; }
+.resume-reading__cover .document-cover__fallback { width: 100%; height: 100%; padding: 0.3rem; }
+.resume-reading__cover .document-cover__fallback strong { font-size: 1.3rem; }
+.resume-reading__copy { display: grid; min-width: 0; gap: 0.35rem; flex: 1; }
+.resume-reading__copy small { color: var(--lime); font-size: 0.72rem; }
+.resume-reading__copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resume-reading__copy > span { color: var(--paper-muted); font-size: 0.8rem; }
+.resume-reading > span:last-child { color: var(--lime); font-size: 1.5rem; }
+.desk-tip { display: flex; align-items: center; gap: 1.2rem; border-left: 1px solid var(--line-strong); padding-left: 1.5rem; }
+.desk-tip > span { font-size: 2.4rem; color: var(--lime); }
+.desk-tip p { color: var(--paper-muted); font-size: 0.87rem; line-height: 1.6; margin: 0.4rem 0 0; }
+
+.library-notice {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  width: min(1180px, calc(100% - 3rem));
+  margin: 0 auto 1.5rem;
+  border: 1px solid rgba(255, 180, 110, 0.35);
+  border-radius: 0.8rem;
+  padding: 1rem 1.25rem;
+  background: #251d15;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.library-notice > div { min-width: 0; }
+.library-notice p { margin: 0.25rem 0; color: var(--paper-muted); }
+.library-notice ul { padding-left: 1.2rem; margin: 0.5rem 0 0; }
+.library-notice > button { flex-shrink: 0; }
+.search-summary { color: var(--paper-muted); font-size: 0.85rem; margin: -0.5rem 0 1.5rem; }
+.search-empty { align-content: center; gap: 0.8rem; }
+.search-empty .empty-library__icon { width: 3rem; height: 3rem; border-radius: 50%; font-size: 1.6rem; background: var(--ink-raised); color: var(--paper-muted); }
+.search-empty strong { margin-top: 0; }
+.search-empty .secondary-button { margin-top: 0.5rem; }
+.document-card__meta button { min-height: 2.5rem; padding-inline: 0.3rem; }
+.document-card__meta { padding-block: 0.3rem; }
+.document-progress span { font-size: 0.65rem; color: #babcb3; }
+.document-card__meta { font-size: 0.68rem; color: #a9aca3; flex-wrap: wrap; }
+.reading-desk ~ .library-section { padding-top: 2rem; }
+.reading-desk ~ .library-section .library-section__header h2 { font-size: 2rem; }
+.document-card__open:focus-visible { outline-offset: -4px; border-radius: 1rem; }
+.import-overlay > span { max-width: min(38rem, calc(100% - 3rem)); overflow-wrap: anywhere; }
 
 .gesture-panel__header {
   display: flex;
@@ -1215,6 +1384,10 @@ select:focus-visible {
   opacity: 0;
 }
 
+.camera-frame--error { height: 2.5rem; }
+.camera-frame--error video { visibility: hidden; }
+.tracking-error .inline-alert { margin-top: 0; }
+
 .camera-frame__privacy {
   position: absolute;
   inset: 0;
@@ -1247,16 +1420,27 @@ select:focus-visible {
   padding: 0.42rem 0.55rem;
   background: rgba(8, 10, 9, 0.8);
   color: var(--paper);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   backdrop-filter: blur(8px);
 }
 
 .status-dot {
+  flex-shrink: 0;
   width: 0.48rem;
   height: 0.48rem;
   border-radius: 50%;
   background: #7d7f79;
 }
+
+.gesture-directions { margin: 0.75rem 0; color: var(--paper-muted); line-height: 1.6; font-size: 0.85rem; }
+.whole-page-control { margin: 0.75rem 0 1rem; }
+.whole-page-control > p:first-child { margin: 0 0 0.5rem; color: var(--paper-muted); font-size: 0.8rem; line-height: 1.5; }
+.whole-page-control .secondary-button { margin: 0; min-height: 2.75rem; }
+.whole-page-control .is-fitted:disabled { opacity: 1; color: var(--lime); border-color: var(--lime); cursor: default; }
+.camera-retry { width: 100%; margin: 0.4rem 0 1rem; }
+.camera-off { margin-top: 1rem; }
+.camera-active-indicator--error i { background: var(--red); box-shadow: none; }
+.camera-active-indicator--loading i, .camera-active-indicator--requesting i, .camera-active-indicator--paused i { background: var(--blue); box-shadow: none; }
 
 .status-dot--ready,
 .status-dot--hand,
@@ -1286,11 +1470,13 @@ select:focus-visible {
 
 .gesture-metrics {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   justify-content: space-between;
   margin-bottom: 1rem;
   color: #8d9089;
   font-family: var(--mono);
-  font-size: 0.55rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
 }
 
@@ -1300,7 +1486,7 @@ select:focus-visible {
   margin: 0 0 0.45rem;
   color: var(--paper-muted);
   font-family: var(--mono);
-  font-size: 0.59rem;
+  font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -1330,11 +1516,11 @@ select:focus-visible {
 }
 
 .segmented-control button {
-  min-height: 2.35rem;
+  min-height: 2.75rem;
   border-right: 1px solid var(--line);
   background: var(--ink-soft);
   color: var(--paper-muted);
-  font-size: 0.65rem;
+  font-size: 0.8rem;
 }
 
 .segmented-control button:last-child {
@@ -1346,13 +1532,17 @@ select:focus-visible {
   color: var(--lime-ink);
 }
 
+.segmented-control button:focus-visible { outline-offset: -4px; outline-color: var(--paper); }
+.segmented-control button.is-active:focus-visible { outline-color: var(--lime-ink); }
+
 .check-row {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   padding: 0.45rem 0;
   color: var(--paper-muted);
-  font-size: 0.7rem;
+  font-size: 0.8rem;
+  min-height: 2.75rem;
 }
 
 .check-row input {
@@ -1377,13 +1567,13 @@ select:focus-visible {
 
 .calibration-card strong {
   display: block;
-  font-size: 0.78rem;
+  font-size: 0.9rem;
 }
 
 .calibration-hint {
   margin: 0.4rem 0 0;
   color: #9b9e97;
-  font-size: 0.65rem;
+  font-size: 0.8rem;
   line-height: 1.45;
 }
 
@@ -1406,7 +1596,7 @@ select:focus-visible {
 .privacy-note {
   margin: 1rem 0 0;
   color: #858781;
-  font-size: 0.64rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -1448,13 +1638,18 @@ select:focus-visible {
     display: none;
   }
 
-  .camera-active-indicator,
-  .bookmark-control .text-button {
+  .camera-active-indicator {
     display: none;
   }
 }
 
 @media (max-width: 760px) {
+  .reading-desk { width: calc(100% - 1.5rem); grid-template-columns: 1fr; gap: 1.5rem; padding: 2rem 0; }
+  .reading-desk h1 { max-width: none; }
+  .desk-tip { border-left: 0; border-top: 1px solid var(--line); padding: 1.2rem 0 0; }
+  .library-notice, .storage-warning { width: calc(100% - 1.5rem); }
+  .library-notice { padding: 1rem; }
+  .confirm-dialog > div { flex-wrap: wrap; }
   .library-header {
     width: min(100% - 1.5rem, 1180px);
     min-height: 5.4rem;
@@ -1515,17 +1710,27 @@ select:focus-visible {
   }
 
   .reader-topbar {
+    display: flex;
+    flex-wrap: wrap;
     min-height: 3.9rem;
+    gap: 0.5rem;
   }
 
+  .reader-topbar__leading { flex: 1 1 100%; }
+  .reader-topbar__actions { display: contents; }
+  .reader-topbar .bookmark-control { flex-shrink: 0; }
+  .reader-page-controls { display: flex; flex-shrink: 0; }
+  .reader-page-controls .icon-button { width: 2.5rem; height: 2.5rem; }
+  .bookmark-menu { right: -3rem; width: min(19rem, calc(100vw - 1.5rem)); }
+
   .reader-document-title {
-    max-width: 10rem;
+    max-width: none;
   }
 
   .gesture-button {
-    width: 2.65rem;
-    padding: 0;
-    font-size: 0;
+    width: auto;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.75rem;
   }
 
   .gesture-button__hand {
@@ -1565,6 +1770,54 @@ select:focus-visible {
     justify-content: center;
     gap: 0.4rem;
   }
+}
+
+@media (max-width: 380px) {
+  .reader-topbar__leading { flex-basis: calc(100% - 8rem); min-width: 0; order: 0; }
+  .reader-topbar .bookmark-control { order: 1; margin-left: auto; }
+  .reader-topbar .reader-page-controls { order: 2; }
+  .reader-topbar .gesture-button { order: 3; margin-left: auto; }
+  .bookmark-menu { right: 0; }
+}
+
+/* Real interface zoom can leave much less than 320 CSS pixels. Keep every
+   reader command reachable without shrinking its accessible name or target. */
+@media (max-width: 300px) {
+  .library-header { flex-wrap: wrap; padding-block: 1rem; }
+  .library-header__actions { width: 100%; }
+  .brand { gap: 0.5rem; min-width: 0; }
+  .brand-mark { flex-shrink: 0; }
+  .brand > span:last-child { min-width: 0; }
+  .brand strong { overflow-wrap: anywhere; }
+  .resume-reading { flex-wrap: wrap; gap: 0.75rem; }
+  .resume-reading__copy { flex-basis: 100%; }
+  .resume-reading > span:last-child { display: none; }
+  .confirm-dialog { padding: 0.75rem; }
+  .confirm-dialog > div > button { width: 100%; padding-inline: 0.5rem; }
+  .segmented-control:not(.segmented-control--two) { grid-template-columns: 1fr; }
+  .segmented-control:not(.segmented-control--two) button { border-right: 0; border-bottom: 1px solid var(--line); }
+  .segmented-control:not(.segmented-control--two) button:last-child { border-bottom: 0; }
+  .reader-topbar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.25rem; padding: 0.375rem; }
+  .reader-topbar__leading { grid-column: 1 / 4; min-width: 0; gap: 0.375rem; }
+  .reader-topbar .gesture-button { grid-column: 4; grid-row: 1; width: 100%; min-width: 0; min-height: 2.5rem; margin: 0; padding: 0; }
+  .gesture-button__label, .reader-page-status__full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .reader-page-status__compact { display: inline; white-space: nowrap; }
+  .reader-topbar .reader-page-controls { grid-column: 1 / 3; grid-row: 2; justify-content: space-around; gap: 0; }
+  .reader-topbar .bookmark-control { grid-column: 3 / 5; grid-row: 2; justify-content: space-around; margin: 0; gap: 0; }
+  .reader-topbar .icon-button { flex-shrink: 0; width: 2.25rem; height: 2.5rem; }
+  .bookmark-control .text-button { min-width: 2.25rem; padding-inline: 0.25rem; }
+  .bookmark-count__label { display: none; }
+}
+
+/* A short zoomed window cannot fit setup below the header. Give its modal
+   presentation the whole viewport, with independently scrolling options. */
+@media (max-width: 760px) and (max-height: 420px) {
+  .gesture-panel:not(.gesture-panel--collapsed) { position: fixed; inset: 0; width: 100%; z-index: 60; border-left: 0; }
+  .gesture-panel__header { padding: 0.5rem; gap: 0.5rem; align-items: center; }
+  .gesture-panel__header .eyebrow { display: none; }
+  .gesture-panel__header h2 { font-size: 1rem; }
+  .gesture-panel__scroll { padding: 0.25rem 0.5rem 0.75rem; }
+  .gesture-panel__footer { padding: 0.5rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

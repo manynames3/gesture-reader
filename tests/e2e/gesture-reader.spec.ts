@@ -203,7 +203,7 @@ test.describe("Gesture Reader", () => {
 
   test("uses a fake local camera, turns exactly one page, and releases tracks", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.addInitScript(() => {
       const NativeWorker = window.Worker;
       const workers: Array<{
@@ -309,6 +309,19 @@ test.describe("Gesture Reader", () => {
             const stream = canvas.captureStream(20);
             const track = stream.getVideoTracks()[0];
             if (track) {
+              // A real webcam continually delivers frames. Keep the synthetic
+              // canvas alive and ticking too, including after reconnection.
+              let frame = 0;
+              const timer = window.setInterval(() => {
+                if (track.readyState === "ended") {
+                  clearInterval(timer);
+                  return;
+                }
+                if (context) {
+                  context.fillStyle = frame++ % 2 ? "#161914" : "#171a15";
+                  context.fillRect(0, 0, canvas.width, canvas.height);
+                }
+              }, 50);
               Object.defineProperty(track, "getSettings", {
                 configurable: true,
                 value: () => ({
@@ -454,6 +467,29 @@ test.describe("Gesture Reader", () => {
           ).__cameraRequestCount(),
       ),
     ).toBe(1);
+
+    await expect(page.getByRole("button", { name: "Head tilt", exact: true })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Turn off gestures", exact: true })).toBeInViewport();
+    await page.screenshot({ path: testInfo.outputPath("gesture-setup-desktop.png") });
+    await page.setViewportSize({ width: 390, height: 640 });
+    await expect(page.getByRole("button", { name: "Head tilt", exact: true })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Turn off gestures", exact: true })).toBeInViewport();
+    await page.screenshot({ path: testInfo.outputPath("gesture-setup-narrow.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    // Closing a practice session must not silently consume later gestures.
+    await page.getByRole("button", { name: "Start calibration" }).click();
+    await expect(page.getByText("Practice mode · gestures won’t turn pages")).toBeVisible();
+    await page.getByRole("button", { name: "Close gesture setup" }).click();
+    await expect(page.getByRole("button", { name: "Gesture controls", exact: true })).toBeFocused();
+    await page.evaluate(() => (window as unknown as { __emitGesture(direction: "left"): void }).__emitGesture("left"));
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Previous page", exact: true }).click();
+    await expect(page.getByText("Page 1 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
+    await page.getByRole("button", { name: "Start calibration" }).click();
+    await page.getByRole("button", { name: "Cancel calibration" }).click();
+    await expect(page.getByText("Practice mode · gestures won’t turn pages")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Start calibration" }).click();
     await expect(
@@ -712,6 +748,88 @@ test.describe("Gesture Reader", () => {
     });
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
     await expect(page.getByText("Now on page 2", { exact: true })).toBeVisible();
+    // Native modal closure must resume without leaving the focused PDF iframe.
+    const nativeDialogViewer = page.frameLocator("pdfjs-viewer-element iframe");
+    await nativeDialogViewer.locator("#secondaryToolbarToggleButton").click();
+    await nativeDialogViewer.locator("#documentProperties").click();
+    await expect(nativeDialogViewer.getByRole("dialog", { name: "Document details", exact: true })).toBeVisible();
+    await page.evaluate(() =>
+      (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("right"));
+    await page.waitForTimeout(350);
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await nativeDialogViewer.locator("#documentPropertiesClose").focus();
+    await page.keyboard.press("Enter");
+    await expect(nativeDialogViewer.locator("#documentPropertiesDialog")).not.toBeVisible();
+    await testInfo.attach("closed-pdf-dialog-focus", {
+      body: JSON.stringify(await page.locator("pdfjs-viewer-element").evaluate((element) => {
+        const frameDocument = (element as unknown as { iframe: HTMLIFrameElement }).iframe.contentDocument;
+        return { documentFocused: document.hasFocus(), active: document.activeElement?.tagName,
+          nativeFocused: frameDocument?.hasFocus(), nativeActive: frameDocument?.activeElement?.outerHTML.slice(0, 300),
+          status: document.querySelector(".camera-frame__status")?.textContent };
+      }), null, 2), contentType: "application/json",
+    });
+    await page.evaluate(() =>
+      (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("right"));
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Previous page", exact: true }).click();
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    // Unlike entering the iframe, a real loss of document focus stays paused.
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
+      window.dispatchEvent(new Event("blur"));
+    });
+    await expect(page.locator(".camera-frame__status")).toContainText("Paused");
+    await page.evaluate(() =>
+      (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("right"));
+    await page.waitForTimeout(350);
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      Reflect.deleteProperty(document, "hasFocus");
+      window.dispatchEvent(new Event("focus"));
+    });
+    await expect(page.locator(".camera-frame__status")).not.toContainText("Paused");
+    await page.evaluate(() =>
+      (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("right"));
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Previous page", exact: true }).click();
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    // Full-screen setup allows practice, not turns of its covered PDF. Both
+    // input modes retain the same live camera and resume after setup closes.
+    const requestsBeforeModal = await page.evaluate(() =>
+      (window as unknown as { __cameraRequestCount(): number }).__cameraRequestCount());
+    await page.setViewportSize({ width: 320, height: 400 });
+    const setup = page.getByRole("dialog", { name: "Gesture controls" });
+    await expect(setup).toHaveAttribute("aria-modal", "true");
+    for (const mode of ["Head tilt", "Palm swipe"]) {
+      await setup.getByRole("button", { name: mode, exact: true }).click();
+      await page.evaluate(() =>
+        (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("left"));
+      // This is a negative assertion: give a rejected result time to arrive.
+      await page.waitForTimeout(350);
+      await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+      await expect(page.locator(".pdf-stage")).toHaveAttribute("inert", "");
+      await expect(page.locator(".camera-frame__status")).not.toContainText("Now on page");
+      await setup.getByRole("button", { name: "Start calibration" }).click();
+      await page.evaluate(() =>
+        (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("left"));
+      await expect(setup.locator(".calibration-progress .is-complete")).toHaveCount(1);
+      await page.evaluate(() =>
+        (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("right"));
+      await expect(setup.getByText("Both directions are ready", { exact: true })).toBeVisible();
+      await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+      await setup.getByRole("button", { name: "Finish", exact: true }).click();
+    }
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Gesture controls", exact: true })).toBeFocused();
+    await page.evaluate(() =>
+      (window as unknown as { __emitGesture(direction: "left" | "right"): void }).__emitGesture("left"));
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Previous page", exact: true }).click();
+    await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
+    expect(await page.evaluate(() =>
+      (window as unknown as { __cameraRequestCount(): number }).__cameraRequestCount())).toBe(requestsBeforeModal);
     await page.getByRole("button", { name: "Palm swipe" }).click();
 
     const requestCountBeforeDisconnect = await page.evaluate(
@@ -790,7 +908,13 @@ test.describe("Gesture Reader", () => {
       page.getByText("Camera needs attention").first(),
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "Gesture controls" }).click();
+    await expect(page.getByText("Camera active", { exact: true })).toHaveCount(0);
+    expect(
+      await page.evaluate(() =>
+        (window as unknown as { __gestureTracks: MediaStreamTrack[] }).__gestureTracks.every((track) => track.readyState === "ended"),
+      ),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Try camera again" }).click();
     await expect(page.getByText("Camera active")).toBeVisible();
     expect(
       await page.evaluate(() =>
@@ -801,6 +925,9 @@ test.describe("Gesture Reader", () => {
         ).__gestureTracks.some((track) => track.readyState === "live"),
       ),
     ).toBe(true);
+    await page.getByRole("button", { name: "Close gesture setup" }).click();
+    await expect(page.getByRole("complementary", { name: "Gesture controls" })).toBeHidden();
+    await expect(page.getByText("Camera active")).toBeVisible();
     await page.getByRole("button", { name: "Gesture controls" }).click();
     await page.getByRole("button", { name: "Turn off gestures" }).click();
     await expect(page.getByText("Camera active")).toBeHidden();

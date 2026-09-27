@@ -1,3 +1,5 @@
+export const MAX_PDF_BYTES = 500 * 1024 * 1024;
+
 export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (value) =>

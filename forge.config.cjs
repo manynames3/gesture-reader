@@ -1,5 +1,6 @@
 const { execFileSync } = require("node:child_process");
 const { join } = require("node:path");
+const cameraUsage = "Gesture Reader uses the camera to turn PDF pages with palm swipes or head tilts. Video stays on your Mac.";
 
 module.exports = {
   packagerConfig: {
@@ -9,20 +10,17 @@ module.exports = {
     appBundleId: "com.gesturereader.desktop",
     icon: "electron/assets/GestureReader",
     usageDescription: {
-      Camera:
-        "Gesture Reader uses the camera for on-device hand gestures that turn PDF pages.",
+      Camera: cameraUsage,
     },
     extendInfo: {
-      NSCameraUsageDescription:
-        "Gesture Reader uses the camera for on-device hand gestures that turn PDF pages.",
+      NSCameraUsageDescription: cameraUsage,
     },
     ignore(filePath) {
       if (!filePath) return false;
       return ![
         /^\/package\.json$/,
         /^\/electron(?:\/|$)/,
-        /^\/dist(?:\/|$)/,
-        /^\/public(?:\/|$)/,
+        /^\/dist(?:\/client(?:\/|$)|$)/,
       ].some((pattern) => pattern.test(filePath));
     },
   },

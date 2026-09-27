@@ -1,4 +1,5 @@
 export type ReaderCommand =
+  | { type: "fitPage"; source: "button" }
   | {
       type: "nextPage" | "previousPage";
       source: "gesture" | "keyboard" | "button";
@@ -51,7 +52,7 @@ export interface ImportablePdf {
 }
 
 export interface ImportResult {
-  status: "imported" | "duplicate" | "rejected";
+  status: "imported" | "restored" | "duplicate" | "rejected";
   record?: DocumentRecord;
   message?: string;
 }
@@ -70,6 +71,8 @@ export interface StorageEstimate {
   usage: number;
   quota: number;
   persisted: boolean;
+  recovery?: { restored: number; rebuilt: number; skipped: number; retained?: number };
+  backupUnavailable?: boolean;
 }
 
 export interface LibraryRepository {
@@ -137,6 +140,7 @@ export interface GestureEngine {
 
 export interface DesktopLibraryBridge {
   isDesktop: true;
+  onAddPdfs?(listener: () => void): () => void;
   list(): Promise<DocumentRecord[]>;
   pickAndImport(): Promise<ImportResult[]>;
   importBytes(files: Array<{ name: string; bytes: ArrayBuffer }>): Promise<ImportResult[]>;

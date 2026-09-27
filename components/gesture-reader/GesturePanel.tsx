@@ -7,7 +7,9 @@ import {
   useRef,
   useState,
 } from "react";
+import { useShortGestureSetup } from "@/lib/ui/useShortGestureSetup";
 import { BrowserGestureEngine } from "@/lib/gesture/browserGestureEngine";
+import { createCameraFrameCapture } from "@/lib/gesture/cameraFrameCapture";
 import { openPalmThresholdForSensitivity } from "@/lib/gesture/swipeDetector";
 import type {
   GestureEvent,
@@ -22,7 +24,12 @@ interface GesturePanelProps {
   open: boolean;
   paused: boolean;
   navigationBusy: boolean;
+  readerReady: boolean;
+  wholePageFitted: boolean;
+  onFitPage(): Promise<NavigationResult>;
   onDisable(): void;
+  onClose(): void;
+  onStatusChange(status: GestureStatus): void;
   onGesture(
     direction: "left" | "right",
     source: "palmSwipe" | "headTilt",
@@ -34,7 +41,7 @@ type CalibrationStep = "off" | "left" | "right" | "complete";
 const statusCopy: Record<GestureStatus, string> = {
   off: "Camera off",
   requesting: "Waiting for permission",
-  loading: "Loading hand tracking",
+  loading: "Loading gesture tracking",
   ready: "Ready for an open palm",
   hand: "Palm detected — swipe",
   head: "Head tilt detected — hold",
@@ -43,12 +50,23 @@ const statusCopy: Record<GestureStatus, string> = {
   error: "Camera needs attention",
 };
 
-function loadPreference<T>(key: string, fallback: T): T {
+function loadPreference<T extends string | boolean>(key: string, fallback: T, allowed?: readonly T[]): T {
   try {
     const stored = localStorage.getItem(key);
-    return stored === null ? fallback : (JSON.parse(stored) as T);
+    if (stored === null) return fallback;
+    const value: unknown = JSON.parse(stored);
+    if (typeof value !== typeof fallback || (allowed && !allowed.includes(value as T))) return fallback;
+    return value as T;
   } catch {
     return fallback;
+  }
+}
+
+function savePreference(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private browsing or a full storage area must not disable live controls.
   }
 }
 
@@ -57,10 +75,20 @@ export function GesturePanel({
   open,
   paused,
   navigationBusy,
+  readerReady,
+  wholePageFitted,
+  onFitPage,
   onDisable,
+  onClose,
+  onStatusChange,
   onGesture,
 }: GesturePanelProps) {
+  const shortSetup = useShortGestureSetup();
+  const setupModal = shortSetup && open;
+  const setupModalRef = useRef(setupModal);
+  const panelRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const engineRef = useRef<BrowserGestureEngine | null>(null);
   const calibrationRef = useRef<CalibrationStep>("off");
   const pausedRef = useRef(paused);
@@ -85,18 +113,18 @@ export function GesturePanel({
   const [sensitivity, setSensitivity] = useState<GestureSensitivity>(() =>
     typeof window === "undefined"
       ? "medium"
-      : loadPreference("gesture-reader:sensitivity", "medium"),
+      : loadPreference<GestureSensitivity>("gesture-reader:sensitivity", "medium", ["low", "medium", "high"]),
   );
   const [inputMode, setInputMode] = useState<GestureInputMode>(() =>
     typeof window === "undefined"
       ? "palm"
-      : loadPreference("gesture-reader:input-mode", "palm"),
+      : loadPreference<GestureInputMode>("gesture-reader:input-mode", "palm", ["palm", "head"]),
   );
   const modeRef = useRef<GestureInputMode>(inputMode);
   const [inverted, setInverted] = useState(() =>
     typeof window === "undefined"
       ? false
-      : loadPreference("gesture-reader:inverted", false),
+      : loadPreference<boolean>("gesture-reader:inverted", false),
   );
   const [showPreview, setShowPreview] = useState(true);
   const [fps, setFps] = useState(0);
@@ -116,6 +144,14 @@ export function GesturePanel({
   const [calibration, setCalibration] = useState<CalibrationStep>("off");
   const [calibrationFeedback, setCalibrationFeedback] = useState("");
   const [turnFeedback, setTurnFeedback] = useState("");
+  const [fittingPage, setFittingPage] = useState(false);
+  const [fitError, setFitError] = useState("");
+  // Native Page Fit can also resolve a failed attempt; do not keep its obsolete error.
+  if (wholePageFitted && fitError) setFitError("");
+
+  useEffect(() => {
+    onStatusChange(paused && enabled ? "paused" : status);
+  }, [enabled, onStatusChange, paused, status]);
 
   // Camera events do not wait for passive effects. Update every event guard
   // before paint so the first gesture after a modal closes is not discarded.
@@ -126,13 +162,32 @@ export function GesturePanel({
     onDisableRef.current = onDisable;
     onGestureRef.current = onGesture;
     calibrationRef.current = calibration;
-  }, [calibration, navigationBusy, onDisable, onGesture, paused]);
+    setupModalRef.current = setupModal;
+  }, [calibration, navigationBusy, onDisable, onGesture, paused, setupModal]);
+
+  useLayoutEffect(() => {
+    // Do not carry a partially armed swipe/held tilt across setup boundaries.
+    engineRef.current?.reset();
+  }, [setupModal]);
 
   const clearTurnFeedback = useCallback(() => {
     turnFeedbackGenerationRef.current += 1;
     clearTimeout(turnFeedbackTimerRef.current);
     setTurnFeedback("");
   }, []);
+
+  const endCalibration = useCallback(() => {
+    calibrationRef.current = "off";
+    setCalibration("off");
+    setCalibrationFeedback("");
+    engineRef.current?.reset();
+    clearTurnFeedback();
+  }, [clearTurnFeedback]);
+
+  useEffect(() => {
+    if (open) closeButtonRef.current?.focus({ preventScroll: true });
+    else if (calibrationRef.current !== "off") endCalibration();
+  }, [endCalibration, open, shortSetup]);
 
   const showTurnFeedback = useCallback(
     (message: string, clearAfter = 0) => {
@@ -154,16 +209,13 @@ export function GesturePanel({
   );
 
   useEffect(() => {
-    localStorage.setItem(
-      "gesture-reader:sensitivity",
-      JSON.stringify(sensitivity),
-    );
+    savePreference("gesture-reader:sensitivity", sensitivity);
     sensitivityRef.current = sensitivity;
     engineRef.current?.updateSensitivity(sensitivity);
   }, [sensitivity]);
 
   useEffect(() => {
-    localStorage.setItem("gesture-reader:inverted", JSON.stringify(inverted));
+    savePreference("gesture-reader:inverted", inverted);
     invertedRef.current = inverted;
   }, [inverted]);
 
@@ -173,6 +225,16 @@ export function GesturePanel({
         lastEngineStatusRef.current = event.status;
         if (!pausedRef.current) setStatus(event.status);
         setStatusMessage(event.message ?? "");
+        if (event.status === "error" || event.status === "loading" || event.status === "off") {
+          setFps(0);
+          setConfidence(0);
+          setHandPresent(false);
+          setArmProgress(0);
+          setFacePresent(false);
+          setHoldProgress(0);
+          setHoldDirection(undefined);
+          setHeadState("calibrating");
+        }
         return;
       }
       if (event.type === "metrics") {
@@ -238,6 +300,8 @@ export function GesturePanel({
         return;
       }
       if (currentCalibration !== "off") return;
+      // Keep live tracking available for practice, not hidden page turns.
+      if (setupModalRef.current) return;
 
       const direction = invertedRef.current
         ? event.direction === "left"
@@ -290,6 +354,7 @@ export function GesturePanel({
     let restartRequested = false;
     let animationFrame = 0;
     let videoFrameCallback = 0;
+    let focusCheckTimer: ReturnType<typeof setTimeout> | undefined;
     let stream: MediaStream | undefined;
     let activeTrack: MediaStreamTrack | undefined;
     let currentStreamDeviceId = "";
@@ -297,8 +362,17 @@ export function GesturePanel({
     let lastFrameId: number | undefined;
     const engine = new BrowserGestureEngine();
     const preview = videoRef.current;
+    const captureFrame = preview ? createCameraFrameCapture(preview) : undefined;
     engineRef.current = engine;
-    const unsubscribe = engine.subscribe(handleEngineEvent);
+    const unsubscribe = engine.subscribe((event) => {
+      handleEngineEvent(event);
+      if (event.type === "status" && event.status === "error") {
+        failed = true;
+        activeTrack?.removeEventListener("ended", handleTrackEnded);
+        stream?.getTracks().forEach((track) => track.stop());
+        if (preview && preview.srcObject === stream) preview.srcObject = null;
+      }
+    });
 
     function fallbackFrameId(video: HTMLVideoElement) {
       const qualityFrames =
@@ -315,29 +389,23 @@ export function GesturePanel({
     }
 
     async function processVideoFrame(frameId: number, timestamp: number) {
-      if (cancelled) return;
+      if (cancelled || failed) return;
       const video = preview;
       if (
         video &&
         video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
         engine.canAcceptFrame() &&
         !pausedRef.current &&
+        !navigationBusyRef.current &&
         document.visibilityState === "visible" &&
         frameId !== lastFrameId &&
         timestamp - lastFrameAt >= 50
       ) {
         try {
-          const scale = Math.min(
-            1,
-            640 / Math.max(1, video.videoWidth),
-            480 / Math.max(1, video.videoHeight),
-          );
-          const bitmap = await createImageBitmap(video, {
-            resizeWidth: Math.max(1, Math.round(video.videoWidth * scale)),
-            resizeHeight: Math.max(1, Math.round(video.videoHeight * scale)),
-            resizeQuality: "medium",
-          });
-          if (cancelled) {
+          if (!captureFrame) return;
+          const bitmap = await captureFrame();
+          // Permission, focus or tracking can change while bitmap capture awaits.
+          if (cancelled || failed || pausedRef.current || navigationBusyRef.current || document.visibilityState !== "visible") {
             bitmap.close();
             return;
           }
@@ -346,31 +414,21 @@ export function GesturePanel({
             lastFrameId = frameId;
           }
         } catch {
-          try {
-            const bitmap = await createImageBitmap(video);
-            if (cancelled) {
-              bitmap.close();
-              return;
-            }
-            if (engine.submitFrame(bitmap, timestamp)) {
-              lastFrameAt = timestamp;
-              lastFrameId = frameId;
-            }
-          } catch {
-            if (!cancelled) {
-              lastEngineStatusRef.current = "error";
-              setStatus("error");
-              setStatusMessage(
-                "This browser cannot pass camera frames to on-device hand tracking.",
-              );
-            }
+          if (!cancelled && !failed) {
+            failed = true;
+            await discardStaleStart();
+            lastEngineStatusRef.current = "error";
+            setStatus("error");
+            setStatusMessage(
+              "This browser cannot pass camera frames to on-device gesture tracking. Try the camera again, or use the page buttons.",
+            );
           }
         }
       }
     }
 
     function scheduleFrameCapture() {
-      if (cancelled || !preview) return;
+      if (cancelled || failed || !preview) return;
       if (typeof preview.requestVideoFrameCallback === "function") {
         videoFrameCallback = preview.requestVideoFrameCallback(
           (timestamp, metadata) => {
@@ -483,11 +541,20 @@ export function GesturePanel({
       if (document.visibilityState === "hidden") onDisableRef.current();
     }
     function handleBlur() {
+      clearTimeout(focusCheckTimer);
       windowFocusedRef.current = false;
       pausedRef.current = true;
       setStatus("paused");
+      // Entering PDF.js's iframe blurs the parent window too. Wait for the
+      // browser's focus chain to settle before treating it as leaving the app.
+      focusCheckTimer = setTimeout(() => {
+        if (cancelled) return;
+        if (document.hasFocus()) handleFocus();
+        else engine.reset();
+      }, 0);
     }
     function handleFocus() {
+      clearTimeout(focusCheckTimer);
       windowFocusedRef.current = true;
       pausedRef.current = externalPausedRef.current;
       if (!externalPausedRef.current) {
@@ -548,6 +615,7 @@ export function GesturePanel({
 
     return () => {
       cancelled = true;
+      clearTimeout(focusCheckTimer);
       cancelAnimationFrame(animationFrame);
       if (
         preview &&
@@ -576,12 +644,12 @@ export function GesturePanel({
   const visibleStatus = paused && enabled ? "paused" : status;
   const relativeRoll = rollDegrees - neutralRollDegrees;
   const headDirection = holdDirection ?? (relativeRoll < 0 ? "left" : "right");
-  const cameraStatus = turnFeedback ||
+  const cameraStatus = visibleStatus === "error" || visibleStatus === "paused"
+    ? statusCopy[visibleStatus]
+    : turnFeedback ||
     (inputMode === "head"
       ? visibleStatus === "requesting" ||
-        visibleStatus === "loading" ||
-        visibleStatus === "paused" ||
-        visibleStatus === "error"
+        visibleStatus === "loading"
         ? statusCopy[visibleStatus]
         : visibleStatus === "cooldown"
           ? "Gesture detected — return your head to center"
@@ -591,7 +659,7 @@ export function GesturePanel({
               ? "Center your face in view"
               : headState === "calibrating"
                 ? `Look straight ahead — ${Math.round(holdProgress * 100)}%`
-                : "Centered — right: next · left: previous"
+                : inverted ? "Centered — left: next · right: previous" : "Centered — right: next · left: previous"
       : visibleStatus === "ready"
         ? !handPresent
           ? "Raise your open palm into view"
@@ -645,7 +713,7 @@ export function GesturePanel({
       ? calibration === "off"
         ? "The camera first learns your comfortable center, then checks one deliberate tilt each way."
         : calibration === "complete"
-          ? "Right tilt advances; left tilt goes back. Finish to enable page turns."
+          ? `${inverted ? "Left tilt advances; right tilt goes back." : "Right tilt advances; left tilt goes back."} ${setupModal ? "Finish, then close setup to turn pages." : "Finish to enable page turns."}`
           : visibleStatus === "cooldown"
             ? "Come fully back to center and hold briefly before tilting the other way."
             : visibleStatus === "head"
@@ -656,7 +724,7 @@ export function GesturePanel({
       : calibration === "off"
         ? "Hold your palm still for a beat, then check one swipe in each direction."
         : calibration === "complete"
-          ? "Calibration passed. Finish to enable page turns."
+          ? `Calibration passed. ${setupModal ? "Finish, then close setup to turn pages." : "Finish to enable page turns."}`
           : visibleStatus === "cooldown"
             ? "Move your hand out of the preview, wait for Ready, then raise it again."
             : visibleStatus === "hand"
@@ -704,15 +772,13 @@ export function GesturePanel({
   function selectInputMode(mode: GestureInputMode) {
     if (mode === inputMode) return;
     clearTurnFeedback();
-    localStorage.setItem(
-      "gesture-reader:input-mode",
-      JSON.stringify(mode),
-    );
+    savePreference("gesture-reader:input-mode", mode);
     modeRef.current = mode;
     setInputMode(mode);
     calibrationRef.current = "off";
     setCalibration("off");
     setCalibrationFeedback("");
+    setFps(0);
     setConfidence(0);
     setHandPresent(false);
     setArmProgress(0);
@@ -722,38 +788,128 @@ export function GesturePanel({
     setHoldProgress(0);
     setHoldDirection(undefined);
     setHeadState("calibrating");
-    engineRef.current?.updateMode(mode);
+    if (lastEngineStatusRef.current === "error") {
+      // A fatal worker error already stopped its camera. Switching only the
+      // model would report readiness without any live frames. Restart both.
+      setCameraGeneration((current) => current + 1);
+    } else {
+      engineRef.current?.updateMode(mode);
+    }
   }
 
   return (
     <aside
+      ref={panelRef}
       className={`gesture-panel ${
         open ? "" : "gesture-panel--collapsed"
       }`}
       aria-label="Gesture controls"
+      role={shortSetup && open ? "dialog" : undefined}
+      aria-modal={shortSetup && open ? true : undefined}
       aria-hidden={!open}
       inert={open ? undefined : true}
+      onKeyDown={(event) => {
+        if (!shortSetup || !open || event.key !== "Tab") return;
+        const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]',
+        ) ?? []).filter((control) => control.getClientRects().length > 0);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first?.focus();
+        }
+      }}
     >
       <div className="gesture-panel__header">
         <div>
-          <p className="eyebrow">On-device vision</p>
+          <p className="eyebrow">Hands-free reading</p>
           <h2>Gesture setup</h2>
         </div>
         <button
           type="button"
           className="icon-button"
-          onClick={onDisable}
-          aria-label="Turn off gestures"
+          ref={closeButtonRef}
+          onClick={onClose}
+          aria-label="Close gesture setup"
         >
           ×
         </button>
       </div>
 
+      <div className="gesture-panel__scroll" tabIndex={0} aria-label="Gesture setup options">
+      {setupModal && <p className="calibration-mode">Setup preview · close setup to turn pages</p>}
+      {status === "error" && (
+        <div className="tracking-error">
+          {statusMessage && <p className="inline-alert" role="alert">{statusMessage}</p>}
+          <button
+            type="button"
+            className="primary-button camera-retry"
+            onClick={() => {
+              clearTurnFeedback();
+              // Retry removes this button while starting. Keep keyboard focus
+              // on a stable, visible setup control instead of losing it.
+              closeButtonRef.current?.focus({ preventScroll: true });
+              setCameraGeneration((current) => current + 1);
+            }}
+          >
+            Try camera again
+          </button>
+        </div>
+      )}
+      <fieldset className="sensitivity-control control-method">
+        <legend>Control method</legend>
+        <div className="segmented-control segmented-control--two">
+          {(["palm", "head"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={inputMode === value ? "is-active" : ""}
+              onClick={() => selectInputMode(value)}
+              aria-pressed={inputMode === value}
+            >
+              {value === "palm" ? "Palm swipe" : "Head tilt"}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <p className="gesture-directions">
+        {inputMode === "head"
+          ? `Tilt ${inverted ? "left" : "right"} to go forward, ${inverted ? "right" : "left"} to go back. Return to center between turns.`
+          : `Swipe ${inverted ? "right" : "left"} to go forward, ${inverted ? "left" : "right"} to go back. Lower your hand between turns.`}
+      </p>
+
+      <div className="whole-page-control">
+        <p id="whole-page-hint">See the entire page without scrolling.</p>
+        <button
+          type="button"
+          className={`secondary-button secondary-button--full${wholePageFitted ? " is-fitted" : ""}`}
+          aria-describedby="whole-page-hint"
+          disabled={!readerReady || navigationBusy || fittingPage || wholePageFitted}
+          onClick={() => {
+            setFittingPage(true);
+            setFitError("");
+            void onFitPage().then((result) => {
+              if (result.status !== "confirmed") setFitError("The page could not be fitted. Try again or choose Page Fit in the PDF zoom menu.");
+            }).catch(() => {
+              setFitError("The page could not be fitted. Try again or choose Page Fit in the PDF zoom menu.");
+            }).finally(() => setFittingPage(false));
+          }}
+        >
+          {wholePageFitted && <span aria-hidden="true">✓ </span>}
+          {fittingPage ? "Fitting page…" : wholePageFitted ? "Whole page fitted" : "Fit whole page"}
+        </button>
+        {fitError && !wholePageFitted && <p className="inline-alert" role="alert">{fitError}</p>}
+        <p className="sr-only" role="status" aria-atomic="true">{wholePageFitted ? "Whole page fitted." : fittingPage ? "Fitting page…" : ""}</p>
+      </div>
+
       <div
-        className={`camera-frame ${showPreview ? "" : "camera-frame--hidden"}`}
+        className={`camera-frame ${showPreview ? "" : "camera-frame--hidden"} ${status === "error" ? "camera-frame--error" : ""}`}
       >
         <video ref={videoRef} muted playsInline aria-label="Mirrored camera preview" />
-        {!showPreview && (
+        {!showPreview && status !== "error" && (
           <div className="camera-frame__privacy">
             <span className="camera-frame__privacy-dot" />
             Preview hidden
@@ -765,11 +921,13 @@ export function GesturePanel({
         </div>
       </div>
 
-      {statusMessage && (
+      {statusMessage && status !== "error" && (
         <p className="inline-alert" role="alert">
           {statusMessage}
         </p>
       )}
+
+      <p className="sr-only" role="status">{turnFeedback ? `Navigation: ${turnFeedback}` : ""}</p>
 
       <div className="gesture-metrics" aria-label="Gesture tracking metrics">
         <span>{fps || "—"} FPS</span>
@@ -805,23 +963,6 @@ export function GesturePanel({
           </option>
         ))}
       </select>
-
-      <fieldset className="sensitivity-control">
-        <legend>Control method</legend>
-        <div className="segmented-control segmented-control--two">
-          {(["palm", "head"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={inputMode === value ? "is-active" : ""}
-              onClick={() => selectInputMode(value)}
-              aria-pressed={inputMode === value}
-            >
-              {value === "palm" ? "Palm swipe" : "Head tilt"}
-            </button>
-          ))}
-        </div>
-      </fieldset>
 
       <fieldset className="sensitivity-control">
         <legend>Sensitivity</legend>
@@ -869,6 +1010,7 @@ export function GesturePanel({
       <div className="calibration-card">
         <div>
           <p className="eyebrow">Two-step check</p>
+          {calibration !== "off" && <p className="calibration-mode">Practice mode · gestures won’t turn pages</p>}
           <strong aria-live="polite">{calibrationPrompt}</strong>
           <p className="calibration-hint">{calibrationHint}</p>
         </div>
@@ -893,12 +1035,23 @@ export function GesturePanel({
               ? "Finish"
               : "Restart"}
         </button>
+        {(calibration === "left" || calibration === "right") && (
+          <button type="button" className="text-button calibration-cancel" onClick={endCalibration}>
+            Cancel calibration
+          </button>
+        )}
       </div>
 
       <p className="privacy-note">
         Video frames and landmarks stay in memory on this device. Nothing is
         recorded or sent to a server.
       </p>
+      </div>
+      <div className="gesture-panel__footer">
+      <button type="button" className="secondary-button secondary-button--full camera-off" onClick={onDisable}>
+        Turn off gestures
+      </button>
+      </div>
     </aside>
   );
 }

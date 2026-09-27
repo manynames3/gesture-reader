@@ -3,10 +3,12 @@ const {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   protocol,
   session,
 } = require("electron");
 const { readFile, stat } = require("node:fs/promises");
+const { Readable } = require("node:stream");
 const path = require("node:path");
 const { createDesktopLibrary } = require("./library.cjs");
 
@@ -106,6 +108,9 @@ async function handleProtocol(request) {
   if (url.host !== "app") return new Response("Forbidden", { status: 403 });
   const match = /^\/__library\/([0-9a-f-]{36})$/i.exec(url.pathname);
   if (!match) return serveRenderer(request.url);
+  if (!["GET", "HEAD"].includes(request.method)) {
+    return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
+  }
 
   try {
     const range = await library.readRange(
@@ -115,18 +120,27 @@ async function handleProtocol(request) {
     const headers = {
       "Accept-Ranges": "bytes",
       "Content-Type": "application/pdf",
-      "Content-Length": String(range.buffer.byteLength),
+      "Content-Length": String(range.length),
       "Cache-Control": "private, no-store",
     };
     if (range.partial) {
       headers["Content-Range"] =
         `bytes ${range.start}-${range.end}/${range.total}`;
     }
-    return new Response(range.buffer, {
+    // Measure queue capacity in bytes, not chunks. A default chunk-count
+    // strategy could otherwise queue thousands of 64 KiB disk reads.
+    const body = request.method === "HEAD" ? null : Readable.toWeb(range.stream, {
+      strategy: { highWaterMark: 64 * 1024, size: (chunk) => chunk.byteLength },
+    });
+    if (!body) range.stream.destroy();
+    return new Response(body, {
       status: range.partial ? 206 : 200,
       headers,
     });
-  } catch {
+  } catch (error) {
+    if (error?.code === "ERR_PDF_RANGE") {
+      return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${error.total}` } });
+    }
     return new Response("PDF not found", { status: 404 });
   }
 }
@@ -155,7 +169,17 @@ function registerLibraryIpc() {
   handle("library:storage-estimate", () => library.storageEstimate());
 }
 
-function configurePermissions() {
+function configureSessionSecurity() {
+  // Enforce local-only networking below the renderer CSP, including workers
+  // and requests initiated through Chromium's session network stack.
+  session.defaultSession.webRequest.onBeforeRequest(
+    { urls: ["<all_urls>"] },
+    (details, callback) => callback({
+      cancel: !isTrustedUrl(details.url) &&
+        !details.url.startsWith("blob:gesture-reader://app/") &&
+        !details.url.startsWith("data:"),
+    }),
+  );
   const isVideoOnly = (permission, requestingOrigin, details = {}) => {
     if (permission !== "media" || !isTrustedUrl(requestingOrigin)) return false;
     const mediaTypes = Array.isArray(details.mediaTypes)
@@ -185,8 +209,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
-    minWidth: 980,
-    minHeight: 680,
+    minWidth: 360,
+    minHeight: 480,
     backgroundColor: "#0b0d0c",
     title: "Gesture Reader",
     webPreferences: {
@@ -202,14 +226,59 @@ function createWindow() {
   mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
     if (!isTrustedUrl(navigationUrl)) event.preventDefault();
   });
+  const addPdfs = Menu.getApplicationMenu()?.getMenuItemById("add-pdfs");
+  if (addPdfs) addPdfs.enabled = true;
+  mainWindow.on("closed", () => {
+    mainWindow = undefined;
+    if (addPdfs) addPdfs.enabled = false;
+  });
   void mainWindow.loadURL(`${APP_ORIGIN}/`);
+}
+
+function configureApplicationMenu() {
+  app.setAboutPanelOptions({
+    applicationName: "Gesture Reader",
+    applicationVersion: app.getVersion(),
+    credits: "Read PDFs with palm swipes or head tilts. Your library and camera processing stay on this device.",
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
+    { label: "File", submenu: [
+      {
+        id: "add-pdfs", label: "Add PDFs…", accelerator: "CmdOrCtrl+O",
+        enabled: false,
+        click: () => {
+          if (mainWindow && !mainWindow.isDestroyed() && isTrustedUrl(mainWindow.webContents.getURL())) {
+            mainWindow.webContents.send("app:add-pdfs");
+          }
+        },
+      },
+      { type: "separator" },
+      { role: "close" },
+    ] },
+    { role: "editMenu" },
+    { label: "View", submenu: [
+      // Reload can discard unsaved reader state; development tools are not
+      // part of the installed reading experience.
+      ...(!app.isPackaged ? [
+        { role: "reload" }, { role: "toggleDevTools" }, { type: "separator" },
+      ] : []),
+      { role: "resetZoom", label: "Actual Interface Size" },
+      { role: "zoomIn", label: "Enlarge Interface" },
+      { role: "zoomOut", label: "Reduce Interface" },
+      { type: "separator" },
+      { role: "togglefullscreen" },
+    ] },
+    { role: "windowMenu" },
+  ]));
 }
 
 app.whenReady().then(async () => {
   library = createDesktopLibrary(app, dialog);
   protocol.handle("gesture-reader", handleProtocol);
-  configurePermissions();
+  configureSessionSecurity();
   registerLibraryIpc();
+  configureApplicationMenu();
   createWindow();
 
   app.on("activate", () => {

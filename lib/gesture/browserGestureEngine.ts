@@ -36,9 +36,16 @@ export class BrowserGestureEngine implements GestureEngine {
   private listeners = new Set<(event: GestureEvent) => void>();
   private ready = false;
   private frameInFlight = false;
+  private discardInFlightResult = false;
   private frameTimes: number[] = [];
   private mode: GestureInputMode = "palm";
   private sensitivity: GestureSensitivity = "medium";
+  private responseTimer?: ReturnType<typeof setTimeout>;
+
+  private expectResponse(worker: Worker, timeout: number, message: string) {
+    clearTimeout(this.responseTimer);
+    this.responseTimer = setTimeout(() => this.fail(message, worker), timeout);
+  }
 
   async start(settings: GestureSettings): Promise<void> {
     // stop() performs its teardown synchronously; do not yield here or a
@@ -67,6 +74,7 @@ export class BrowserGestureEngine implements GestureEngine {
   updateMode(mode: GestureInputMode) {
     if (mode === this.mode) return;
     this.mode = mode;
+    clearTimeout(this.responseTimer);
     const worker = this.worker;
     if (!worker) return;
     try {
@@ -78,25 +86,39 @@ export class BrowserGestureEngine implements GestureEngine {
     this.worker = undefined;
     this.ready = false;
     this.frameInFlight = false;
+    this.discardInFlightResult = false;
     this.frameTimes = [];
     this.launchWorker();
   }
 
   private launchWorker() {
     this.emit({ type: "status", status: "loading" });
-    const worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), {
-      type: "module",
-      name: "gesture-reader-on-device-vision",
-    });
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./gesture.worker.ts", import.meta.url), {
+        type: "module",
+        name: "gesture-reader-on-device-vision",
+      });
+    } catch {
+      this.emit({ type: "status", status: "error", message: "On-device gesture tracking could not start. Try the camera again; manual controls still work." });
+      return;
+    }
     this.worker = worker;
+    this.expectResponse(worker, 20_000, "Gesture tracking took too long to start. Try the camera again; manual controls still work.");
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       if (this.worker !== worker) return;
       const message = event.data;
       if (message.type === "ready") {
+        clearTimeout(this.responseTimer);
         this.ready = true;
         this.emit({ type: "status", status: "ready" });
       } else if (message.type === "frameDone") {
+        clearTimeout(this.responseTimer);
         this.frameInFlight = false;
+        if (this.discardInFlightResult) {
+          this.discardInFlightResult = false;
+          return;
+        }
         const now = performance.now();
         this.frameTimes.push(now);
         this.frameTimes = this.frameTimes.filter((time) => now - time <= 1_000);
@@ -146,6 +168,7 @@ export class BrowserGestureEngine implements GestureEngine {
               : undefined,
         });
       } else if (message.type === "gesture") {
+        if (this.discardInFlightResult) return;
         this.emit({
           ...message,
           source:
@@ -186,6 +209,7 @@ export class BrowserGestureEngine implements GestureEngine {
       return false;
     }
     this.frameInFlight = true;
+    this.expectResponse(worker, 8_000, "Gesture tracking stopped responding. Try the camera again; manual controls still work.");
     try {
       worker.postMessage({ type: "frame", bitmap, timestamp }, [bitmap]);
       return true;
@@ -204,6 +228,9 @@ export class BrowserGestureEngine implements GestureEngine {
   reset() {
     const worker = this.worker;
     if (!worker) return;
+    // The worker processes reset after its current inference. Suppress that
+    // frame's gesture AND metrics until frameDone drains it; keep the watchdog.
+    this.discardInFlightResult ||= this.frameInFlight;
     try {
       worker.postMessage({ type: "reset" });
     } catch {
@@ -212,6 +239,7 @@ export class BrowserGestureEngine implements GestureEngine {
   }
 
   async stop(): Promise<void> {
+    clearTimeout(this.responseTimer);
     const worker = this.worker;
     if (worker) {
       try {
@@ -224,6 +252,7 @@ export class BrowserGestureEngine implements GestureEngine {
     this.worker = undefined;
     this.ready = false;
     this.frameInFlight = false;
+    this.discardInFlightResult = false;
     this.frameTimes = [];
     this.emit({ type: "status", status: "off" });
   }
@@ -239,10 +268,12 @@ export class BrowserGestureEngine implements GestureEngine {
 
   private fail(message: string, worker: Worker) {
     if (this.worker !== worker) return;
+    clearTimeout(this.responseTimer);
     worker.terminate();
     this.worker = undefined;
     this.ready = false;
     this.frameInFlight = false;
+    this.discardInFlightResult = false;
     this.frameTimes = [];
     this.emit({ type: "status", status: "error", message });
   }

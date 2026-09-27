@@ -4,7 +4,9 @@ import type {
   ImportablePdf,
   LibraryQuery,
   LibraryRepository,
+  ImportResult,
 } from "@/lib/types";
+import { isPdfBytes, MAX_PDF_BYTES } from "./hash";
 
 export class DesktopLibraryRepository implements LibraryRepository {
   private get bridge() {
@@ -14,13 +16,24 @@ export class DesktopLibraryRepository implements LibraryRepository {
   }
 
   async import(files: ImportablePdf[]) {
-    const payload = await Promise.all(
-      files.map(async ({ file }) => ({
-        name: file.name,
-        bytes: await file.arrayBuffer(),
-      })),
-    );
-    return this.bridge.importBytes(payload);
+    const results: ImportResult[] = [];
+    // Large drag-and-drop batches must not materialize every PDF at once in
+    // both renderer and main-process memory. Commit each copy before reading
+    // the next one; preserve truthful per-file results if one read fails.
+    for (const { file } of files) {
+      try {
+        if (file.size > MAX_PDF_BYTES) {
+          results.push({ status: "rejected", message: `${file.name} is larger than the 500 MB local limit.` });
+        } else if (!isPdfBytes(await file.slice(0, 5).arrayBuffer())) {
+          results.push({ status: "rejected", message: `${file.name} is not a valid PDF file.` });
+        } else {
+          results.push(...await this.bridge.importBytes([{ name: file.name, bytes: await file.arrayBuffer() }]));
+        }
+      } catch {
+        results.push({ status: "rejected", message: `${file.name} could not be imported.` });
+      }
+    }
+    return results;
   }
 
   pickAndImport() {

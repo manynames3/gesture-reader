@@ -51,12 +51,55 @@ function fakeBitmap() {
 
 describe("BrowserGestureEngine frame flow", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     FakeWorker.instances = [];
     vi.stubGlobal("Worker", FakeWorker);
   });
 
   afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("reports an actionable error when model startup never responds", async () => {
+    const engine = new BrowserGestureEngine();
+    const events: GestureEvent[] = [];
+    engine.subscribe((event) => events.push(event));
+    await engine.start(settings);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(FakeWorker.instances[0].terminated).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "status", status: "error", message: expect.stringContaining("too long") });
+  });
+
+  it("stops a stuck inference and ignores its late gesture", async () => {
+    const engine = new BrowserGestureEngine();
+    const events: GestureEvent[] = [];
+    engine.subscribe((event) => events.push(event));
+    await engine.start(settings);
+    const worker = FakeWorker.instances[0];
+    worker.emit({ type: "ready" });
+    engine.submitFrame(fakeBitmap(), 100);
+    engine.reset();
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(worker.terminated).toBe(true);
+    worker.emit({ type: "gesture", direction: "left", confidence: 1 });
+    expect(events.at(-1)).toMatchObject({ type: "status", status: "error" });
+    expect(engine.canAcceptFrame()).toBe(false);
+  });
+
+  it("cancels startup watchdogs after readiness and when stopped", async () => {
+    const engine = new BrowserGestureEngine();
+    const events: GestureEvent[] = [];
+    engine.subscribe((event) => events.push(event));
+    await engine.start(settings);
+    FakeWorker.instances[0].emit({ type: "ready" });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(events.at(-1)).toMatchObject({ type: "status", status: "ready" });
+    engine.updateMode("head");
+    await engine.stop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(events.at(-1)).toMatchObject({ type: "status", status: "off" });
   });
 
   it("drops a frame while inference is busy and accepts the next fresh frame", async () => {
@@ -80,6 +123,31 @@ describe("BrowserGestureEngine frame flow", () => {
       armProgress: 0,
     });
     expect(engine.canAcceptFrame()).toBe(true);
+  });
+
+  it.each(["palm", "head"] as const)("rejects a %s result already in flight when tracking is reset", async (mode) => {
+    const engine = new BrowserGestureEngine();
+    const events: GestureEvent[] = [];
+    engine.subscribe((event) => events.push(event));
+    await engine.start({ ...settings, mode });
+    const worker = FakeWorker.instances[0];
+    worker.emit({ type: "ready" });
+    engine.submitFrame(fakeBitmap(), 100);
+    engine.reset();
+    engine.reset(); // A second UI transition must not forget the pending reset.
+    const gesture = { type: "gesture", direction: "right", confidence: 1 };
+    const frame = { type: "frameDone", mode, state: "cooldown", confidence: 1, armProgress: 3, handPresent: true };
+    worker.emit(gesture);
+    worker.emit(frame);
+    expect(events.filter((event) => event.type === "gesture" || event.type === "metrics")).toEqual([]);
+    expect(engine.canAcceptFrame()).toBe(true);
+    expect(engine.submitFrame(fakeBitmap(), 200)).toBe(true);
+    worker.emit(gesture);
+    worker.emit(frame);
+    expect(events.filter((event) => event.type === "gesture")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "metrics")).toHaveLength(1);
+    expect(engine.canAcceptFrame()).toBe(true);
+    await engine.stop();
   });
 
   it("closes an untransferred bitmap and fails cleanly when postMessage throws", async () => {
@@ -129,6 +197,8 @@ describe("BrowserGestureEngine frame flow", () => {
     await engine.start(settings);
     const worker = FakeWorker.instances[0];
     worker.emit({ type: "ready" });
+    engine.submitFrame(fakeBitmap(), 100);
+    engine.reset();
 
     engine.updateMode("head");
 

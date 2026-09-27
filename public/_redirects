@@ -1,0 +1,2 @@
+# The static framework requests the root route as /.rsc, not /index.rsc.
+/.rsc /index.rsc 200
