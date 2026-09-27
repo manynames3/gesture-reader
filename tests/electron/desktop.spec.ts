@@ -127,8 +127,10 @@ test("real disk write failures preserve the PDF and allow save and removal retri
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeEnabled();
     const managedRoot = await electronApp.evaluate(({ app }) => app.getPath("userData"));
     const catalogPath = path.join(managedRoot, "library", "catalog.json");
+    // Acquire the fault blocker atomically after any in-flight catalog rename.
+    // Never delete an app-owned temporary file to make the injection succeed.
+    await expect(async () => { await mkdir(`${catalogPath}.tmp`); }).toPass({ timeout: 5_000, intervals: [25, 50, 100] });
     const before = await readFile(catalogPath, "utf8");
-    await mkdir(`${catalogPath}.tmp`);
     await page.getByRole("button", { name: "Bookmark current page", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText("could not be saved");
     expect(await readFile(catalogPath, "utf8")).toBe(before);
@@ -136,7 +138,7 @@ test("real disk write failures preserve the PDF and allow save and removal retri
     await page.getByRole("button", { name: "Try saving again" }).click();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await page.getByRole("button", { name: "Back to library", exact: true }).click();
-    await mkdir(`${catalogPath}.tmp`);
+    await expect(async () => { await mkdir(`${catalogPath}.tmp`); }).toPass({ timeout: 5_000, intervals: [25, 50, 100] });
     await page.getByRole("button", { name: "Remove Gesture Reader E2E Guide from library" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("button", { name: "Remove", exact: true }).click();

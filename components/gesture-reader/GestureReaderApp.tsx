@@ -983,7 +983,7 @@ export function GestureReaderApp() {
           </p>
           <dl className="gesture-start-guide" aria-label="Hands-free reading guide">
             <div><dt>Head tilt</dt><dd>Right → next page. Left → previous page.</dd></div>
-            <div><dt>Open palm</dt><dd>Hold still to lock, then swipe left → next or right → previous.</dd></div>
+            <div><dt>Open palm</dt><dd>Hold still to lock, then swipe right → next or left → previous.</dd></div>
             <div><dt>Your choice</dt><dd>Camera stays off until you enable gestures. Keyboard and buttons always work.</dd></div>
           </dl>
           <div className="hero-actions">
@@ -999,7 +999,7 @@ export function GestureReaderApp() {
           </div>
           <p className="gesture-start-note">Open your PDF, choose Enable gestures, then Fit whole page for hands-free reading. Made for sheet music, recipes, and manuals—not just an empty desk.</p>
         </div>
-        <div className="gesture-demo" aria-label="Swipe left to turn a page">
+        <div className="gesture-demo" aria-label="Swipe right for the next page">
           <div className="gesture-demo__halo gesture-demo__halo--one" />
           <div className="gesture-demo__halo gesture-demo__halo--two" />
           <div className="gesture-demo__page gesture-demo__page--back">
@@ -1013,7 +1013,7 @@ export function GestureReaderApp() {
           </div>
           <div className="gesture-demo__motion">
             <span>OPEN PALM</span>
-            <strong>←</strong>
+            <strong>→</strong>
           </div>
         </div>
       </section> : (

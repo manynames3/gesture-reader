@@ -38,6 +38,7 @@ test("server-renders the private local-first reader shell", async () => {
   assert.match(html, /Add PDFs/);
   assert.match(html, /Your documents and camera frames never leave this device/);
   assert.match(html, /Right → next page\. Left → previous page\./);
+  assert.match(html, /swipe right → next or left → previous/);
   assert.match(html, /Camera stays off until you enable gestures/);
   assert.match(html, /Fit whole page for hands-free reading/);
   assert.match(html, /manifest\.webmanifest/);

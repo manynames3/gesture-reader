@@ -722,9 +722,9 @@ export function GesturePanel({
                 ? "Use a comfortable 12–15° tilt. You do not need to move your shoulders."
                 : "Keep your full face visible and look toward the screen."
       : calibration === "off"
-        ? "Hold your palm still for a beat, then check one swipe in each direction."
+        ? `${inverted ? "Left swipe advances; right swipe goes back." : "Right swipe advances; left swipe goes back."} Hold still to lock, then check one swipe in each direction.`
         : calibration === "complete"
-          ? `Calibration passed. ${setupModal ? "Finish, then close setup to turn pages." : "Finish to enable page turns."}`
+          ? `${inverted ? "Left swipe advances; right swipe goes back." : "Right swipe advances; left swipe goes back."} ${setupModal ? "Finish, then close setup to turn pages." : "Finish to enable page turns."}`
           : visibleStatus === "cooldown"
             ? "Move your hand out of the preview, wait for Ready, then raise it again."
             : visibleStatus === "hand"

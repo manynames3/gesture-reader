@@ -7,8 +7,7 @@
 Gesture Reader is a local-first PDF library and reader for the web and macOS.
 It turns one page at a time when the computer's camera recognizes either an
 open-palm swipe or a deliberate head tilt—all vision processing happens on the
-device. Tilt your head right to advance or left to go back; palm swipes keep
-the familiar left-to-advance, right-to-go-back motion.
+device. Tilt or swipe right to advance; tilt or swipe left to go back.
 
 The application combines the complete PDF.js reading experience with an
 intentional, conservative gesture state machine. PDFs, thumbnails, reading
@@ -75,8 +74,8 @@ hands-on testing. No claim of “works every time” is made.
 
 - Opt-in video permission with internal or external camera selection.
 - Choice of responsive palm-swipe or hands-free head-tilt control.
-- Source-aware page directions: right head tilt advances and left head tilt
-  goes back, while palm swipes retain their natural opposite mapping.
+- Consistent page directions: right head tilt or palm swipe advances; left
+  head tilt or palm swipe goes back.
 - Mirrored preview, sensitivity settings, direction inversion, and a
   two-direction calibration check.
 - Visible confidence, palm-lock, cooldown, and reset feedback.
@@ -127,8 +126,8 @@ All navigation enters a `ReaderCommand` bus. Buttons, keyboard shortcuts,
 bookmarks, page input, and recognized gestures issue the same typed commands.
 Gesture code never reaches into PDF.js directly, which keeps page-boundary
 behavior testable and prevents camera logic from becoming coupled to the
-viewer. The gesture source stays attached until command routing, allowing head
-tilts and palm swipes to use different, explicit direction mappings. Command
+viewer. The gesture source stays attached until command routing; both head
+tilts and palm swipes explicitly map right to next and left to previous. Command
 delivery is asynchronous: the adapter returns `confirmed`, `boundary`,
 `notReady`, `busy`, or `timeout`, so the camera UI cannot mistake detector
 cooldown for a completed page turn.
@@ -180,8 +179,9 @@ page turn, latches through cooldown, and cannot fire again until the reader
 returns to the learned neutral band. Short spikes, oscillation, face loss, and
 remaining tilted are rejected; **Recenter head position** explicitly relearns
 the baseline. A right tilt issues the next-page command; a left tilt issues the
-previous-page command. This mapping is separate from palm swipes, where left
-means next and right means previous.
+previous-page command. Palm swipes use the same right-to-next, left-to-previous
+mapping. Directions refer to movement in the mirrored setup preview, independent
+of whether that preview is shown mirrored or unmirrored.
 
 This hybrid approach uses ML for hand, open-palm, and face-landmark recognition,
 but transparent state machines for page-turn decisions. The thresholds are
@@ -382,7 +382,7 @@ Page Width and other choices for closer reading.
 2. Choose the camera and position your full wrist and all five fingers inside
    the preview.
 3. Hold the open palm still until the lock reaches **3/3**.
-4. Swipe left to go to the next page or right to go to the previous page.
+4. Swipe right to go to the next page or left to go to the previous page.
 5. Move the hand out of view briefly after a turn so the detector can reset.
 
 ### Head tilt
