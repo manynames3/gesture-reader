@@ -219,10 +219,13 @@ select:focus-visible {
   border-radius: 0.8rem 0.8rem 0.8rem 0.18rem;
   background: var(--lime);
   color: var(--lime-ink);
-  font-family: var(--mono);
-  font-size: 1.15rem;
-  font-weight: 900;
   transform: rotate(-3deg);
+}
+
+.brand-mark img {
+  display: block;
+  width: 2.125rem;
+  height: 2.125rem;
 }
 
 .brand > span:last-child {

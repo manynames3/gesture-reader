@@ -13,7 +13,7 @@ async function collect(directory, prefix = "") {
 }
 await collect(join(root, "assets"), "assets/");
 await collect(join(root, "vendor"), "vendor/");
-files.push("manifest.webmanifest", "favicon.svg", "favicon-32.png", "icon-192.png", "icon-512.png", "apple-touch-icon.png");
+files.push("manifest.webmanifest", "hand-swipe.svg", "favicon.svg", "favicon-32.png", "icon-192.png", "icon-512.png", "apple-touch-icon.png");
 // Static exports also need their homepage navigation payload when offline.
 try {
   await access(join(root, "index.rsc"));

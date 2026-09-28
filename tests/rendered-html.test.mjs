@@ -34,6 +34,8 @@ test("server-renders the private local-first reader shell", async () => {
     /<title>Gesture Reader — Private, hands-free PDFs<\/title>/i,
   );
   assert.match(html, /Gesture Reader/);
+  assert.match(html, /src="\/hand-swipe\.svg"/);
+  assert.doesNotMatch(html, /class="brand-mark"[^>]*>G<\/span>/);
   assert.match(html, /Private, hands-free PDFs/);
   assert.match(html, /Add PDFs/);
   assert.match(html, /Your documents and camera frames never leave this device/);
@@ -70,6 +72,7 @@ test("ships self-hosted PDF, gesture, and PWA assets", async () => {
   assert.match(offline.revision, /^[a-f0-9]{16}$/);
   assert.ok(offline.bytes > 20_000_000);
   assert.ok(offline.assets.includes("/"));
+  assert.ok(offline.assets.includes("/hand-swipe.svg"));
   assert.ok(offline.assets.includes("/vendor/mediapipe/models/gesture-recognizer-float16-v1.task"));
   assert.ok(offline.assets.includes("/vendor/mediapipe/models/face-landmarker-float16-v1.task"));
   assert.ok(offline.assets.includes("/vendor/pdfjs/5.5.207/viewer.worker.min.mjs"));
