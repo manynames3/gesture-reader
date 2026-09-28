@@ -9,6 +9,11 @@ test("the landing page explains controls without requesting the camera", async (
     };
   });
   await page.goto("/");
+  const brand = page.getByRole("link", { name: "Gesture Reader home", exact: true });
+  const mark = brand.locator(".brand-mark img");
+  await expect(mark).toHaveAttribute("src", "/hand-swipe.svg");
+  await expect(brand.locator(".brand-mark")).not.toHaveText("G");
+  await expect.poll(() => mark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
   await expect(page.getByRole("button", { name: "Choose your first PDF", exact: true })).toBeEnabled();
   await expect(page.getByText("Right → next page. Left → previous page.", { exact: true })).toBeVisible();
   await expect(page.getByText("Hold still to lock, then swipe right → next or left → previous.", { exact: true })).toBeVisible();
@@ -17,8 +22,10 @@ test("the landing page explains controls without requesting the camera", async (
   for (const width of [1440, 390, 280]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.getByRole("button", { name: "Choose your first PDF", exact: true })).toBeVisible();
+    await expect(mark).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: test.info().outputPath(`landing-${width}.png`), fullPage: true });
   }
+  await brand.locator(".brand-mark").screenshot({ path: test.info().outputPath("hand-swipe-mark.png") });
   expect(await page.evaluate(() => Reflect.get(window, "__landingCameraRequests"))).toBe(0);
 });

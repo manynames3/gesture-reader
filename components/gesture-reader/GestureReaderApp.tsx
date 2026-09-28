@@ -928,7 +928,11 @@ export function GestureReaderApp() {
 
       <header className="library-header">
         <Link className="brand" href="/" aria-label="Gesture Reader home">
-          <span className="brand-mark">G</span>
+          <span className="brand-mark" aria-hidden="true">
+            {/* Static, local SVG keeps the swipe mark crisp without animation. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/hand-swipe.svg" width="34" height="34" alt="" />
+          </span>
           <span>
             <strong>Gesture Reader</strong>
             <small>Private, hands-free PDFs</small>
