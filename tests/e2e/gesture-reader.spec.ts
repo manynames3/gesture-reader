@@ -477,6 +477,7 @@ test.describe("Gesture Reader", () => {
     }
     await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await expect(page.getByRole("button", { name: "Head tilt", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("slider", { name: "Head tilt amount" })).toHaveValue("8");
     await page.getByRole("slider", { name: "Head tilt amount" }).fill("6");
     await page.screenshot({ path: testInfo.outputPath("head-movement-amount.png") });
     await page.getByRole("button", { name: "Palm swipe", exact: true }).click();

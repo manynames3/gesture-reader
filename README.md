@@ -43,6 +43,8 @@ The project follows three principles:
 
 ## Recent improvements
 
+- Version 1.2.1 lowers the default head tilt to 8° and fixes a floating-point
+  boundary that could reject a left swipe while accepting its mirrored right swipe.
 - Head tilt by default, immediate palm tracking, no timed hold/cooldown, and
   ordered rapid turns. Adjustable head movement stays separate from speed.
 - Responsive reader and compact gesture setup, with an explicit **Fit whole page** action.
@@ -422,7 +424,7 @@ Page Width and other choices for closer reading.
 
 1. **Enable gestures** starts in head mode by default; a previously chosen mode is remembered.
 2. Look comfortably toward the screen while the camera learns your center.
-3. Tilt **right for the next page** or **left for the previous page**. No timed hold is required. **Head tilt amount** adjusts the comfortable turning point from 3° to 25°.
+3. Tilt **right for the next page** or **left for the previous page**. No timed hold is required. **Head tilt amount** defaults to 8° and adjusts the comfortable turning point from 3° to 25°. Previously saved movement settings remain unchanged.
 4. Return fully to center before the next page turn.
 5. Select **Recenter head position** after moving the camera or changing your
    reading posture.

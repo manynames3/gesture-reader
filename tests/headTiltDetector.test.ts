@@ -48,6 +48,13 @@ function collect(
 }
 
 describe("HeadTiltDetector", () => {
+  it.each([-8, 8])("recognizes the default eight-degree tilt (%s)", (roll) => {
+    const detector = new HeadTiltDetector();
+    for (let timestamp = 0; timestamp <= 400; timestamp += 100) detector.push(face(timestamp, 0));
+    const target = detector.getMetrics().neutralRollDegrees + roll;
+    expect(collect(detector, [face(500, target), face(550, target), face(600, target)]))
+      .toEqual([expect.objectContaining({ direction: roll < 0 ? "left" : "right" })]);
+  });
   it("calibrates a naturally tilted camera position as neutral", () => {
     const detector = new HeadTiltDetector();
     calibrate(detector, 0, 100, 8);

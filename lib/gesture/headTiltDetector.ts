@@ -40,8 +40,8 @@ const sensitivityConfig: Record<GestureSensitivity, HeadTiltConfig> = {
     neutralDegrees: 5,
   },
   medium: {
-    enterDegrees: 12,
-    holdDegrees: 9,
+    enterDegrees: 8,
+    holdDegrees: 6.4,
     neutralDegrees: 5,
   },
   high: {
