@@ -213,6 +213,7 @@ test("a DMG-installed copy reads offline, runs local models and restores its man
     });
     await expect.poll(() => reopened.evaluate(() => innerWidth)).toBe(180);
     await reopened.getByRole("button", { name: "Enable gestures", exact: true }).click();
+    await reopened.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await expect(reopened.getByRole("dialog", { name: "Gesture controls" })).toHaveAttribute("aria-modal", "true");
     const close = reopened.getByRole("button", { name: "Close gesture setup", exact: true });
     await expect(close).toBeFocused();
