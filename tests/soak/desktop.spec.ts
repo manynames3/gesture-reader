@@ -143,6 +143,7 @@ test("a five-minute native reading/model session retains controls and releases c
     await page.waitForTimeout(2000);
     await phase("camera-start");
     await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     let currentPage = 1;
     for (const [index, mode] of ["palm", "head", "palm", "head"].entries()) {
       await phase(`switching-${mode}-${index + 1}`);
@@ -188,6 +189,7 @@ test("a five-minute native reading/model session retains controls and releases c
       expect((await camera()).cameras.every((record) => record.ended)).toBe(true);
       await expect.poll(() => page.workers().length).toBe(1); // PDF only.
       await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+      await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
       await expect(page.getByLabel("Gesture tracking metrics")).toContainText(/[1-9]\d* FPS/, { timeout: 20_000 });
       await phase(`restart-${cycle + 1}`);
       await page.waitForTimeout(15_000);

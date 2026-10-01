@@ -43,6 +43,15 @@ function faceAtRoll(
 }
 
 describe("extractHeadRoll", () => {
+  it.each([[640, 480], [640, 360], [480, 640]])("measures physical roll with a %sx%s camera", (width, height) => {
+    for (const angle of [-15, 15]) {
+      const points = faceAtRoll(angle);
+      for (const index of [...FIRST_EYE, ...SECOND_EYE]) {
+        points[index] = { ...points[index], y: 0.5 + (points[index].y - 0.5) * width / height };
+      }
+      expect(extractHeadRoll(points, width, height).rollDegrees).toBeCloseTo(angle, 5);
+    }
+  });
   it.each([
     [0, 0],
     [-15, -15],

@@ -30,36 +30,24 @@ export interface HeadTiltMetrics {
 interface HeadTiltConfig {
   enterDegrees: number;
   holdDegrees: number;
-  holdDuration: number;
-  cooldown: number;
   neutralDegrees: number;
-  neutralDuration: number;
 }
 
 const sensitivityConfig: Record<GestureSensitivity, HeadTiltConfig> = {
   low: {
     enterDegrees: 15,
     holdDegrees: 12,
-    holdDuration: 420,
-    cooldown: 900,
     neutralDegrees: 5,
-    neutralDuration: 250,
   },
   medium: {
     enterDegrees: 12,
     holdDegrees: 9,
-    holdDuration: 300,
-    cooldown: 750,
     neutralDegrees: 5,
-    neutralDuration: 200,
   },
   high: {
     enterDegrees: 10,
     holdDegrees: 7.5,
-    holdDuration: 220,
-    cooldown: 650,
     neutralDegrees: 6,
-    neutralDuration: 160,
   },
 };
 
@@ -67,9 +55,8 @@ const CALIBRATION_MIN_SAMPLES = 4;
 const CALIBRATION_MIN_DURATION = 250;
 const CALIBRATION_MAX_RANGE = 5;
 const MAX_SAMPLE_GAP = 300;
-const MIN_HOLD_SAMPLES = 3;
-const MIN_RESET_SAMPLES = 3;
-const RECALIBRATE_AFTER_FACE_LOSS = 2_000;
+const MIN_HOLD_SAMPLES = 2;
+const MIN_RESET_SAMPLES = 2;
 const BASELINE_ADAPTATION_MS = 30_000;
 const MIN_QUALITY = 0.25;
 
@@ -99,14 +86,12 @@ export class HeadTiltDetector {
   private currentRoll = 0;
   private currentFacePresent = false;
   private candidateDirection?: "left" | "right";
-  private holdStartedAt = Number.NEGATIVE_INFINITY;
   private holdSamples = 0;
-  private lastTrigger = Number.NEGATIVE_INFINITY;
   private neutralStartedAt = Number.NEGATIVE_INFINITY;
   private neutralSamples = 0;
-  private lastFaceAt = Number.NEGATIVE_INFINITY;
   private lastTimestamp = Number.NEGATIVE_INFINITY;
   private lastValidAt = Number.NEGATIVE_INFINITY;
+  private tiltDegrees?: number;
 
   constructor(sensitivity: GestureSensitivity = "medium") {
     this.sensitivity = sensitivity;
@@ -115,7 +100,31 @@ export class HeadTiltDetector {
   setSensitivity(sensitivity: GestureSensitivity) {
     if (this.sensitivity === sensitivity) return;
     this.sensitivity = sensitivity;
-    this.reset();
+    this.resetMotion();
+  }
+
+  setTiltDegrees(degrees?: number) {
+    const next = degrees !== undefined && Number.isFinite(degrees)
+      ? Math.min(25, Math.max(3, degrees)) : undefined;
+    if (next === this.tiltDegrees) return;
+    this.tiltDegrees = next;
+    this.resetMotion();
+  }
+
+  // Interrupt stale motion without relearning a user's comfortable posture.
+  resetMotion() {
+    this.recentRolls = [];
+    this.clearCandidate();
+    this.neutralSamples = 0;
+    this.neutralStartedAt = Number.NEGATIVE_INFINITY;
+    if (this.state !== "calibrating") this.state = "cooldown";
+  }
+
+  private getConfig(): HeadTiltConfig {
+    const config = sensitivityConfig[this.sensitivity];
+    const enterDegrees = this.tiltDegrees ?? config.enterDegrees;
+    return { ...config, enterDegrees, holdDegrees: enterDegrees * 0.8,
+      neutralDegrees: Math.min(config.neutralDegrees, enterDegrees * 0.4) };
   }
 
   reset() {
@@ -126,10 +135,8 @@ export class HeadTiltDetector {
     this.currentRoll = 0;
     this.currentFacePresent = false;
     this.clearCandidate();
-    this.lastTrigger = Number.NEGATIVE_INFINITY;
     this.neutralStartedAt = Number.NEGATIVE_INFINITY;
     this.neutralSamples = 0;
-    this.lastFaceAt = Number.NEGATIVE_INFINITY;
     this.lastTimestamp = Number.NEGATIVE_INFINITY;
     this.lastValidAt = Number.NEGATIVE_INFINITY;
   }
@@ -159,17 +166,10 @@ export class HeadTiltDetector {
       this.neutralStartedAt = Number.NEGATIVE_INFINITY;
       this.neutralSamples = 0;
       if (this.state === "calibrating") this.calibration = [];
-      if (
-        this.state === "ready" &&
-        input.timestamp - this.lastFaceAt >= RECALIBRATE_AFTER_FACE_LOSS
-      ) {
-        this.startCalibration();
-      }
       return undefined;
     }
 
     const previousValidAt = this.lastValidAt;
-    this.lastFaceAt = input.timestamp;
     if (gap > MAX_SAMPLE_GAP) {
       this.recentRolls = [];
       this.clearCandidate();
@@ -207,22 +207,22 @@ export class HeadTiltDetector {
       return undefined;
     }
 
-    const config = sensitivityConfig[this.sensitivity];
+    const config = this.getConfig();
     const delta = this.currentRoll - this.neutralRoll;
+    const rawDelta = input.rollDegrees - this.neutralRoll;
 
     if (this.state === "cooldown") {
-      this.updateCooldown(input.timestamp, delta, config);
+      this.updateCooldown(input.timestamp, rawDelta, config);
       return undefined;
     }
 
     if (this.state === "ready") {
-      if (Math.abs(delta) < config.enterDegrees) {
+      if (Math.abs(delta) < config.enterDegrees || Math.abs(rawDelta) < config.enterDegrees || Math.sign(rawDelta) !== Math.sign(delta)) {
         this.adaptNeutral(input.timestamp, delta, config, previousValidAt);
         return undefined;
       }
       this.state = "holding";
       this.candidateDirection = delta < 0 ? "left" : "right";
-      this.holdStartedAt = input.timestamp;
       this.holdSamples = 1;
       return undefined;
     }
@@ -230,7 +230,9 @@ export class HeadTiltDetector {
     const direction = delta < 0 ? "left" : "right";
     if (
       direction !== this.candidateDirection ||
-      Math.abs(delta) < config.holdDegrees
+      Math.abs(delta) < config.holdDegrees ||
+      Math.abs(rawDelta) < config.holdDegrees ||
+      Math.sign(rawDelta) !== Math.sign(delta)
     ) {
       this.state = "ready";
       this.clearCandidate();
@@ -238,11 +240,7 @@ export class HeadTiltDetector {
     }
 
     this.holdSamples += 1;
-    const heldFor = input.timestamp - this.holdStartedAt;
-    if (
-      heldFor < config.holdDuration ||
-      this.holdSamples < MIN_HOLD_SAMPLES
-    ) {
+    if (this.holdSamples < MIN_HOLD_SAMPLES) {
       return undefined;
     }
 
@@ -253,15 +251,13 @@ export class HeadTiltDetector {
       ),
     };
     this.state = "cooldown";
-    this.lastTrigger = input.timestamp;
     this.neutralStartedAt = Number.NEGATIVE_INFINITY;
     this.neutralSamples = 0;
     this.clearCandidate();
     return detection;
   }
 
-  getMetrics(timestamp = this.lastTimestamp): HeadTiltMetrics {
-    const config = sensitivityConfig[this.sensitivity];
+  getMetrics(): HeadTiltMetrics {
     const calibrationDuration =
       (this.calibration.at(-1)?.timestamp ?? 0) -
       (this.calibration[0]?.timestamp ?? 0);
@@ -276,9 +272,7 @@ export class HeadTiltDetector {
             ),
           )
         : this.state === "holding"
-          ? clampUnit(
-              (timestamp - this.holdStartedAt) / config.holdDuration,
-            )
+          ? clampUnit(this.holdSamples / MIN_HOLD_SAMPLES)
           : 0;
     return {
       state: this.state,
@@ -309,15 +303,11 @@ export class HeadTiltDetector {
       this.neutralSamples += 1;
     }
 
-    const resetReady =
-      timestamp - this.neutralStartedAt >= config.neutralDuration &&
-      this.neutralSamples >= MIN_RESET_SAMPLES;
-    const cooldownReady =
-      timestamp - this.lastTrigger >= config.cooldown;
-    if (resetReady && cooldownReady) {
+    if (this.neutralSamples >= MIN_RESET_SAMPLES) {
       this.state = "ready";
       this.neutralStartedAt = Number.NEGATIVE_INFINITY;
       this.neutralSamples = 0;
+      this.currentRoll = this.neutralRoll + delta;
       this.recentRolls = [this.currentRoll];
     }
   }
@@ -336,16 +326,8 @@ export class HeadTiltDetector {
     this.neutralRoll += delta * alpha;
   }
 
-  private startCalibration() {
-    this.state = "calibrating";
-    this.calibration = [];
-    this.recentRolls = [];
-    this.clearCandidate();
-  }
-
   private clearCandidate() {
     this.candidateDirection = undefined;
-    this.holdStartedAt = Number.NEGATIVE_INFINITY;
     this.holdSamples = 0;
   }
 }

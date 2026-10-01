@@ -92,6 +92,8 @@ test(`real local models sustain both modes with 1080p ${resizePath} capture whil
   await page.getByRole("button", { name: "Open Scan-heavy Practice Book", exact: true }).click();
   await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+  await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
+  await page.getByRole("button", { name: "Palm swipe", exact: true }).click();
   const reports = [];
   for (const mode of ["palm", "head"]) {
     if (mode === "head") await page.getByRole("button", { name: "Head tilt", exact: true }).click();

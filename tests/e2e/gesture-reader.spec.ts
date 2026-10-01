@@ -204,6 +204,7 @@ test.describe("Gesture Reader", () => {
   test("uses a fake local camera, turns exactly one page, and releases tracks", async ({
     page,
   }, testInfo) => {
+    test.setTimeout(60_000);
     await page.addInitScript(() => {
       const NativeWorker = window.Worker;
       const workers: Array<{
@@ -448,11 +449,43 @@ test.describe("Gesture Reader", () => {
       ).__installGestureWorker();
     });
     await page.getByRole("button", { name: "Enable gestures" }).click();
+    // Enabling starts in head mode without a setup modal blocking the PDF.
+    await expect(page.locator(".gesture-panel")).toHaveClass(/gesture-panel--collapsed/);
+    await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeEnabled();
+    const rapidTurnTiming = await page.evaluate(async () => {
+      Reflect.get(window, "__setGestureFrame")({ mode: "head", state: "ready", facePresent: true, rollDegrees: 0, neutralRollDegrees: 0, holdProgress: 0 });
+      return new Promise<Array<{ page: number; elapsedMs: number }>>((resolve, reject) => {
+        const startedAt = performance.now();
+        const timings: Array<{ page: number; elapsedMs: number }> = [];
+        const observer = new MutationObserver(() => {
+          const text = document.querySelector(".reader-page-status__full")?.textContent ?? "";
+          const pageNumber = Number(text.match(/Page\s+(\d+)/)?.[1]);
+          if (pageNumber >= 2 && !timings.some(({ page }) => page === pageNumber)) timings.push({ page: pageNumber, elapsedMs: performance.now() - startedAt });
+          if (pageNumber === 3) { observer.disconnect(); clearTimeout(timer); resolve(timings); }
+        });
+        observer.observe(document.querySelector(".reader-document-title")!, { subtree: true, childList: true, characterData: true });
+        const timer = setTimeout(() => { observer.disconnect(); reject(new Error("Two accepted gestures did not reach page 3")); }, 2000);
+        Reflect.get(window, "__emitGesture")("right");
+        Reflect.get(window, "__emitGesture")("right");
+      });
+    });
+    await testInfo.attach("rapid-turn-visible-response", { body: JSON.stringify({ scope: "Synthetic detections to real PDF.js and visible page status; excludes camera recognition", timings: rapidTurnTiming }), contentType: "application/json" });
+    await expect(page.getByText("Page 3 of 3", { exact: true })).toBeVisible();
+    for (const target of [2, 1]) {
+      await page.getByRole("button", { name: "Previous page", exact: true }).click();
+      await expect(page.getByText(`Page ${target} of 3`, { exact: true })).toBeVisible();
+    }
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Head tilt", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("slider", { name: "Head tilt amount" }).fill("6");
+    await page.screenshot({ path: testInfo.outputPath("head-movement-amount.png") });
+    await page.getByRole("button", { name: "Palm swipe", exact: true }).click();
+    await page.evaluate(() => Reflect.get(window, "__setGestureFrame")({ mode: "palm", state: "idle", handPresent: false, confidence: 0, armProgress: 0 }));
     await expect(
       page.getByRole("heading", { name: "Gesture setup" }),
     ).toBeVisible();
     await expect(
-      page.getByText(/Raise your open palm into view|Palm locked — swipe now/),
+      page.getByText(/Raise your open palm into view|Open palm ready — swipe now/),
     ).toBeVisible();
     await expect(
       page.getByLabel("Camera", { exact: true }),
@@ -535,7 +568,7 @@ test.describe("Gesture Reader", () => {
       });
     });
     await expect(
-      page.getByText("Spread your fingers and hold still"),
+      page.getByText("Spread your fingers toward the camera"),
     ).toBeVisible();
     await page.evaluate(() => {
       (
@@ -559,7 +592,7 @@ test.describe("Gesture Reader", () => {
     await expect(
       page.getByText("Palm ready — swipe left"),
     ).toBeVisible();
-    await expect(page.getByText("3/3 lock")).toBeVisible();
+    await expect(page.getByText("No lock needed")).toBeVisible();
 
     await page.evaluate(() => {
       (
@@ -687,6 +720,7 @@ test.describe("Gesture Reader", () => {
         ).__cameraRequestCount(),
     );
     await page.getByRole("button", { name: "Head tilt" }).click();
+    await expect(page.getByRole("slider", { name: "Head tilt amount" })).toHaveValue("6");
     await expect(page.getByText("Center your face in view")).toBeVisible();
     expect(
       await page.evaluate(
@@ -989,6 +1023,7 @@ test.describe("Gesture Reader", () => {
         ),
       )
       .toBe(requestsBeforeCancelledStart + 1);
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await page.getByRole("button", { name: "Turn off gestures" }).click();
     await page.evaluate(() => {
       (
@@ -1075,7 +1110,8 @@ test.describe("Gesture Reader", () => {
       .getByRole("button", { name: `Open ${documentTitle}` })
       .click();
     await page.getByRole("button", { name: "Enable gestures" }).click();
-    await page.getByRole("button", { name: "Head tilt" }).click();
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Head tilt", exact: true })).toHaveAttribute("aria-pressed", "true");
 
     await expect(
       page.getByText("Center your face in view"),

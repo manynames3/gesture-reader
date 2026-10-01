@@ -44,18 +44,18 @@ const statusCopy: Record<GestureStatus, string> = {
   loading: "Loading gesture tracking",
   ready: "Ready for an open palm",
   hand: "Palm detected — swipe",
-  head: "Head tilt detected — hold",
-  cooldown: "Gesture detected — reset your hand",
+  head: "Head movement detected",
+  cooldown: "Return your hand to its starting point",
   paused: "Paused",
   error: "Camera needs attention",
 };
 
-function loadPreference<T extends string | boolean>(key: string, fallback: T, allowed?: readonly T[]): T {
+function loadPreference<T extends string | boolean | number>(key: string, fallback: T, allowed?: readonly T[]): T {
   try {
     const stored = localStorage.getItem(key);
     if (stored === null) return fallback;
     const value: unknown = JSON.parse(stored);
-    if (typeof value !== typeof fallback || (allowed && !allowed.includes(value as T))) return fallback;
+    if (typeof value !== typeof fallback || (typeof value === "number" && !Number.isFinite(value)) || (allowed && !allowed.includes(value as T))) return fallback;
     return value as T;
   } catch {
     return fallback;
@@ -93,8 +93,6 @@ export function GesturePanel({
   const calibrationRef = useRef<CalibrationStep>("off");
   const pausedRef = useRef(paused);
   const externalPausedRef = useRef(paused);
-  const navigationBusyRef = useRef(navigationBusy);
-  const navigationRequestInFlightRef = useRef(false);
   const windowFocusedRef = useRef(true);
   const lastEngineStatusRef = useRef<GestureStatus>("off");
   const sensitivityRef = useRef<GestureSensitivity>("medium");
@@ -107,7 +105,7 @@ export function GesturePanel({
   const [status, setStatus] = useState<GestureStatus>("off");
   const [statusMessage, setStatusMessage] = useState("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [deviceId, setDeviceId] = useState("");
+  const [deviceId, setDeviceId] = useState<string>(() => typeof window === "undefined" ? "" : loadPreference<string>("gesture-reader:camera", ""));
   const [activeDeviceId, setActiveDeviceId] = useState("");
   const [cameraGeneration, setCameraGeneration] = useState(0);
   const [sensitivity, setSensitivity] = useState<GestureSensitivity>(() =>
@@ -117,8 +115,8 @@ export function GesturePanel({
   );
   const [inputMode, setInputMode] = useState<GestureInputMode>(() =>
     typeof window === "undefined"
-      ? "palm"
-      : loadPreference<GestureInputMode>("gesture-reader:input-mode", "palm", ["palm", "head"]),
+      ? "head"
+      : loadPreference<GestureInputMode>("gesture-reader:input-mode", "head", ["palm", "head"]),
   );
   const modeRef = useRef<GestureInputMode>(inputMode);
   const [inverted, setInverted] = useState(() =>
@@ -126,11 +124,13 @@ export function GesturePanel({
       ? false
       : loadPreference<boolean>("gesture-reader:inverted", false),
   );
-  const [showPreview, setShowPreview] = useState(true);
+  const [showPreview, setShowPreview] = useState<boolean>(() => typeof window === "undefined" ? true : loadPreference<boolean>("gesture-reader:preview", true));
+  const [headTiltDegrees, setHeadTiltDegrees] = useState(() => typeof window === "undefined" ? 12 : Math.min(25, Math.max(3, loadPreference("gesture-reader:head-tilt-degrees", 12))));
+  const headTiltDegreesRef = useRef(headTiltDegrees);
   const [fps, setFps] = useState(0);
   const [confidence, setConfidence] = useState(0);
   const [handPresent, setHandPresent] = useState(false);
-  const [armProgress, setArmProgress] = useState(0);
+  const [, setArmProgress] = useState(0);
   const [facePresent, setFacePresent] = useState(false);
   const [rollDegrees, setRollDegrees] = useState(0);
   const [neutralRollDegrees, setNeutralRollDegrees] = useState(0);
@@ -158,12 +158,11 @@ export function GesturePanel({
   useLayoutEffect(() => {
     externalPausedRef.current = paused;
     pausedRef.current = paused || !windowFocusedRef.current;
-    navigationBusyRef.current = navigationBusy;
     onDisableRef.current = onDisable;
     onGestureRef.current = onGesture;
     calibrationRef.current = calibration;
     setupModalRef.current = setupModal;
-  }, [calibration, navigationBusy, onDisable, onGesture, paused, setupModal]);
+  }, [calibration, onDisable, onGesture, paused, setupModal]);
 
   useLayoutEffect(() => {
     // Do not carry a partially armed swipe/held tilt across setup boundaries.
@@ -219,6 +218,15 @@ export function GesturePanel({
     invertedRef.current = inverted;
   }, [inverted]);
 
+  useEffect(() => {
+    headTiltDegreesRef.current = headTiltDegrees;
+    savePreference("gesture-reader:head-tilt-degrees", headTiltDegrees);
+    engineRef.current?.updateHeadTiltDegrees(headTiltDegrees);
+  }, [headTiltDegrees]);
+
+  useEffect(() => { savePreference("gesture-reader:camera", deviceId); }, [deviceId]);
+  useEffect(() => { savePreference("gesture-reader:preview", showPreview); }, [showPreview]);
+
   const handleEngineEvent = useCallback(
     (event: GestureEvent) => {
       if (event.type === "status") {
@@ -254,13 +262,9 @@ export function GesturePanel({
         return;
       }
 
-      // A frame can finish after a modal opens, the page starts animating, or
-      // the window loses focus. Never let that stale result turn a page.
-      if (
-        pausedRef.current ||
-        navigationBusyRef.current ||
-        navigationRequestInFlightRef.current
-      ) {
+      // Keep recognizing while PDF turns are pending. The command bus orders
+      // every accepted turn; focus and interaction pauses still gate input.
+      if (pausedRef.current) {
         return;
       }
       if (
@@ -310,7 +314,6 @@ export function GesturePanel({
         : event.direction;
       const feedbackGeneration = turnFeedbackGenerationRef.current + 1;
       turnFeedbackGenerationRef.current = feedbackGeneration;
-      navigationRequestInFlightRef.current = true;
       showTurnFeedback(
         event.source === "headTilt"
           ? "Tilt detected — opening page…"
@@ -338,9 +341,6 @@ export function GesturePanel({
         .catch(() => {
           if (turnFeedbackGenerationRef.current !== feedbackGeneration) return;
           showTurnFeedback("Page did not move — reset and try again", 1_800);
-        })
-        .finally(() => {
-          navigationRequestInFlightRef.current = false;
         });
     },
     [showTurnFeedback],
@@ -396,7 +396,6 @@ export function GesturePanel({
         video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
         engine.canAcceptFrame() &&
         !pausedRef.current &&
-        !navigationBusyRef.current &&
         document.visibilityState === "visible" &&
         frameId !== lastFrameId &&
         timestamp - lastFrameAt >= 50
@@ -405,7 +404,7 @@ export function GesturePanel({
           if (!captureFrame) return;
           const bitmap = await captureFrame();
           // Permission, focus or tracking can change while bitmap capture awaits.
-          if (cancelled || failed || pausedRef.current || navigationBusyRef.current || document.visibilityState !== "visible") {
+          if (cancelled || failed || pausedRef.current || document.visibilityState !== "visible") {
             bitmap.close();
             return;
           }
@@ -508,6 +507,7 @@ export function GesturePanel({
           mode: modeRef.current,
           inverted: invertedRef.current,
           showPreview: true,
+          headTiltDegrees: headTiltDegreesRef.current,
         });
         if (cancelled) {
           await discardStaleStart();
@@ -515,6 +515,10 @@ export function GesturePanel({
         }
         scheduleFrameCapture();
       } catch (error) {
+        if (!cancelled && deviceId && error instanceof DOMException && ["NotFoundError", "OverconstrainedError"].includes(error.name)) {
+          requestCameraFallback();
+          return;
+        }
         failed = true;
         activeTrack?.removeEventListener("ended", handleTrackEnded);
         stream?.getTracks().forEach((track) => track.stop());
@@ -654,7 +658,7 @@ export function GesturePanel({
         : visibleStatus === "cooldown"
           ? "Gesture detected — return your head to center"
           : visibleStatus === "head"
-            ? `Hold ${headDirection} — ${Math.round(holdProgress * 100)}%`
+            ? `Moving ${headDirection}`
             : !facePresent
               ? "Center your face in view"
               : headState === "calibrating"
@@ -665,9 +669,9 @@ export function GesturePanel({
           ? "Raise your open palm into view"
           : confidence < openPalmThreshold
             ? "Hand seen — spread your fingers"
-            : `Hold steady — ${armProgress}/3`
+            : "Open palm ready — swipe now"
         : visibleStatus === "hand"
-          ? "Palm locked — swipe now"
+          ? "Open palm ready — swipe now"
           : statusCopy[visibleStatus]);
   const calibrationDirection =
     calibration === "left" || calibration === "right" ? calibration : null;
@@ -688,7 +692,7 @@ export function GesturePanel({
                   : headState === "calibrating"
                     ? "Look straight ahead while center is learned"
                     : visibleStatus === "head"
-                      ? `Keep holding ${calibrationDirection} — ${Math.round(holdProgress * 100)}%`
+                      ? `Moving ${calibrationDirection}`
                       : `Centered — tilt your head ${calibrationDirection}`
       : calibration === "off"
         ? "Calibrate page turns"
@@ -703,10 +707,8 @@ export function GesturePanel({
                 : !handPresent
                   ? "Raise your whole open palm into view"
                   : confidence < openPalmThreshold
-                    ? "Spread your fingers and hold still"
-                    : visibleStatus !== "hand"
-                      ? `Hold still — palm lock ${armProgress}/3`
-                      : `Palm ready — swipe ${calibrationDirection}`;
+                    ? "Spread your fingers toward the camera"
+                    : `Palm ready — swipe ${calibrationDirection}`;
   const calibrationHint =
     calibrationFeedback ||
     (inputMode === "head"
@@ -715,22 +717,22 @@ export function GesturePanel({
         : calibration === "complete"
           ? `${inverted ? "Left tilt advances; right tilt goes back." : "Right tilt advances; left tilt goes back."} ${setupModal ? "Finish, then close setup to turn pages." : "Finish to enable page turns."}`
           : visibleStatus === "cooldown"
-            ? "Come fully back to center and hold briefly before tilting the other way."
+            ? "Return to center, then tilt again. No waiting is needed."
             : visibleStatus === "head"
-              ? "Keep your shoulders relaxed and hold the tilt until the progress reaches 100%."
+              ? "Keep your shoulders relaxed. Move to the turning point, then return to center."
               : facePresent
-                ? "Use a comfortable 12–15° tilt. You do not need to move your shoulders."
+                ? `Use a comfortable ${headTiltDegrees}° tilt. Adjust the movement amount to suit you.`
                 : "Keep your full face visible and look toward the screen."
       : calibration === "off"
-        ? `${inverted ? "Left swipe advances; right swipe goes back." : "Right swipe advances; left swipe goes back."} Hold still to lock, then check one swipe in each direction.`
+        ? `${inverted ? "Left swipe advances; right swipe goes back." : "Right swipe advances; left swipe goes back."} Move directly, then return to your starting point. No palm lock is needed.`
         : calibration === "complete"
           ? `${inverted ? "Left swipe advances; right swipe goes back." : "Right swipe advances; left swipe goes back."} ${setupModal ? "Finish, then close setup to turn pages." : "Finish to enable page turns."}`
           : visibleStatus === "cooldown"
-            ? "Move your hand out of the preview, wait for Ready, then raise it again."
+            ? "Return to your starting point, or lower your hand, then swipe again."
             : visibleStatus === "hand"
               ? "Keep your palm facing the camera and move across about one fifth of the preview."
               : handPresent
-                ? "Keep your wrist and all five fingers visible until the palm lock reaches 3/3."
+                ? "Keep your wrist and fingers visible as you swipe. You do not need to hold still first."
                 : "Raise your hand above desk height so the full wrist and all five fingers are inside the preview.");
 
   function handleCalibrationButton() {
@@ -766,7 +768,7 @@ export function GesturePanel({
     setHoldProgress(0);
     setHoldDirection(undefined);
     setHeadState("calibrating");
-    engineRef.current?.reset();
+    engineRef.current?.reset(true);
   }
 
   function selectInputMode(mode: GestureInputMode) {
@@ -878,7 +880,7 @@ export function GesturePanel({
       <p className="gesture-directions">
         {inputMode === "head"
           ? `Tilt ${inverted ? "left" : "right"} to go forward, ${inverted ? "right" : "left"} to go back. Return to center between turns.`
-          : `Swipe ${inverted ? "right" : "left"} to go forward, ${inverted ? "left" : "right"} to go back. Lower your hand between turns.`}
+          : `Swipe ${inverted ? "left" : "right"} to go forward, ${inverted ? "right" : "left"} to go back. Return to your starting point between turns.`}
       </p>
 
       <div className="whole-page-control">
@@ -937,12 +939,12 @@ export function GesturePanel({
               {relativeRoll >= 0 ? "+" : ""}
               {relativeRoll.toFixed(1)}° tilt
             </span>
-            <span>{Math.round(holdProgress * 100)}% hold</span>
+            <span>{headTiltDegrees}° turning point</span>
           </>
         ) : (
           <>
             <span>{Math.round(confidence * 100)}% open palm</span>
-            <span>{armProgress}/3 lock</span>
+            <span>{visibleStatus === "cooldown" ? "Return to start" : "No lock needed"}</span>
           </>
         )}
       </div>
@@ -964,7 +966,15 @@ export function GesturePanel({
         ))}
       </select>
 
-      <fieldset className="sensitivity-control">
+      {inputMode === "head" ? (
+        <div className="sensitivity-control">
+          <label className="field-label" htmlFor="head-tilt-amount">Head tilt amount · {headTiltDegrees}°</label>
+          <input id="head-tilt-amount" type="range" min="3" max="25" step="1"
+            value={headTiltDegrees} aria-describedby="head-tilt-amount-hint"
+            onChange={(event) => setHeadTiltDegrees(Number(event.target.value))} />
+          <p id="head-tilt-amount-hint">Smaller for gentle movements, larger to ignore ordinary leaning. Response stays fast.</p>
+        </div>
+      ) : <fieldset className="sensitivity-control">
         <legend>Sensitivity</legend>
         <div className="segmented-control">
           {(["low", "medium", "high"] as const).map((value) => (
@@ -979,7 +989,7 @@ export function GesturePanel({
             </button>
           ))}
         </div>
-      </fieldset>
+      </fieldset>}
 
       <label className="check-row">
         <input

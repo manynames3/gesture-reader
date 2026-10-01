@@ -44,6 +44,7 @@ test("hands-free setup offers an explicit whole-page fit without changing page o
   expect(sheet!.height).toBeGreaterThan(viewport!.height);
   await page.screenshot({ path: testInfo.outputPath("page-width-clipped.png") });
   await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+  await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
   await expect(page.getByRole("button", { name: "Try camera again", exact: true })).toBeVisible();
   await expect(zoom).toHaveValue("page-width"); // Opening setup never overrides a saved preference.
   const fit = page.getByRole("button", { name: "Fit whole page", exact: true });
@@ -78,6 +79,7 @@ test("whole-page action is reachable in a short narrow setup and preserves rotat
   await native.locator("#pageRotateCw").click();
   await page.getByRole("button", { name: "Bookmark current page", exact: true }).click();
   await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+  await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
   const fit = page.getByRole("button", { name: "Fit whole page", exact: true });
   await expect(fit).toBeInViewport();
   await fit.click();
@@ -137,6 +139,7 @@ test("a failed whole-page fit reports failure and can be retried", async ({ page
   await native.locator("#spreadOdd").click();
   await expect(native.locator("#spreadOdd")).toHaveAttribute("aria-checked", "true");
   await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+  await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
   await page.locator("pdfjs-viewer-element").evaluate(async (element) => {
     const { viewerApp } = await (element as unknown as { initPromise: Promise<{
       viewerApp: { pdfViewer: { currentScaleValue: string } };

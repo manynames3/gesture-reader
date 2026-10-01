@@ -192,6 +192,8 @@ test("setup keyboard scrolling and modified shortcuts never turn the PDF", async
   const gestures = page.getByRole("button", { name: "Enable gestures", exact: true });
   await gestures.focus();
   await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Gesture controls", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("button", { name: "Close gesture setup" })).toBeFocused();
   await page.getByRole("button", { name: "Head tilt", exact: true }).focus();
   await page.keyboard.press("PageDown");
@@ -276,6 +278,7 @@ test("short-window setup reflows as an accessible modal with reachable options a
   for (const size of [{ width: 320, height: 400 }, { width: 180, height: 224 }]) {
     await page.setViewportSize(size);
     await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     const modal = page.getByRole("dialog", { name: "Gesture controls" });
     await expect(modal).toHaveAttribute("aria-modal", "true");
     const close = modal.getByRole("button", { name: "Close gesture setup" });
@@ -348,6 +351,7 @@ test("key setup copy has readable contrast, usable targets and reduced motion", 
   await open.click();
   await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+  await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Camera access was denied");
   const contrast = await page.locator(".privacy-note, .gesture-metrics, .calibration-hint, .gesture-directions, .gesture-panel .segmented-control button, .gesture-panel .field-label, .gesture-panel legend").evaluateAll((elements) => {
     const parse = (value: string) => {

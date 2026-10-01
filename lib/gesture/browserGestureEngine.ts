@@ -40,6 +40,7 @@ export class BrowserGestureEngine implements GestureEngine {
   private frameTimes: number[] = [];
   private mode: GestureInputMode = "palm";
   private sensitivity: GestureSensitivity = "medium";
+  private headTiltDegrees?: number;
   private responseTimer?: ReturnType<typeof setTimeout>;
 
   private expectResponse(worker: Worker, timeout: number, message: string) {
@@ -53,6 +54,7 @@ export class BrowserGestureEngine implements GestureEngine {
     void this.stop();
     this.mode = settings.mode;
     this.sensitivity = settings.sensitivity;
+    this.headTiltDegrees = settings.headTiltDegrees;
     this.launchWorker();
   }
 
@@ -65,6 +67,7 @@ export class BrowserGestureEngine implements GestureEngine {
         type: "settings",
         sensitivity,
         mode: this.mode,
+        headTiltDegrees: this.headTiltDegrees,
       });
     } catch {
       this.fail("On-device gesture tracking stopped unexpectedly.", worker);
@@ -89,6 +92,11 @@ export class BrowserGestureEngine implements GestureEngine {
     this.discardInFlightResult = false;
     this.frameTimes = [];
     this.launchWorker();
+  }
+
+  updateHeadTiltDegrees(degrees: number) {
+    this.headTiltDegrees = degrees;
+    this.updateSensitivity(this.sensitivity);
   }
 
   private launchWorker() {
@@ -190,6 +198,7 @@ export class BrowserGestureEngine implements GestureEngine {
         type: "initialize",
         sensitivity: this.sensitivity,
         mode: this.mode,
+        headTiltDegrees: this.headTiltDegrees,
       });
     } catch {
       const message =
@@ -225,14 +234,14 @@ export class BrowserGestureEngine implements GestureEngine {
     }
   }
 
-  reset() {
+  reset(recenter = false) {
     const worker = this.worker;
     if (!worker) return;
     // The worker processes reset after its current inference. Suppress that
     // frame's gesture AND metrics until frameDone drains it; keep the watchdog.
     this.discardInFlightResult ||= this.frameInFlight;
     try {
-      worker.postMessage({ type: "reset" });
+      worker.postMessage({ type: "reset", recenter });
     } catch {
       this.fail("On-device gesture tracking stopped unexpectedly.", worker);
     }

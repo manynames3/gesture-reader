@@ -163,6 +163,7 @@ test("a DMG-installed copy reads offline, runs local models and restores its man
       Object.assign(window, { packagedCameraState: () => ({ requests, tracks: tracks.map((track) => track.readyState) }) });
     });
     await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await expect(page.getByLabel("Gesture tracking metrics")).toContainText(/[1-9]\d* FPS/, { timeout: 20_000 });
     await page.getByRole("button", { name: "Fit whole page", exact: true }).click();
     await page.getByRole("button", { name: "Head tilt", exact: true }).click();
@@ -212,6 +213,7 @@ test("a DMG-installed copy reads offline, runs local models and restores its man
     });
     await expect.poll(() => reopened.evaluate(() => innerWidth)).toBe(180);
     await reopened.getByRole("button", { name: "Enable gestures", exact: true }).click();
+    await reopened.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await expect(reopened.getByRole("dialog", { name: "Gesture controls" })).toHaveAttribute("aria-modal", "true");
     const close = reopened.getByRole("button", { name: "Close gesture setup", exact: true });
     await expect(close).toBeFocused();

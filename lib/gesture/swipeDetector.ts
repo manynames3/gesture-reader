@@ -22,54 +22,42 @@ interface SensitivityConfig {
   displacement: number;
   fastDisplacement?: number;
   minFastAverageVelocity?: number;
-  cooldown: number;
   minDuration: number;
   maxDuration: number;
   horizontalRatio: number;
   minRecentVelocity: number;
   trackingLease: number;
-  armRange: number;
-  maxArmSpeed: number;
 }
 
 const sensitivityConfig: Record<GestureSensitivity, SensitivityConfig> = {
   low: {
     openPalmThreshold: 0.7,
     displacement: 0.18,
-    cooldown: 900,
-    minDuration: 110,
+    minDuration: 50,
     maxDuration: 600,
     horizontalRatio: 1.6,
     minRecentVelocity: 0.18,
     trackingLease: 650,
-    armRange: 0.045,
-    maxArmSpeed: 0.14,
   },
   medium: {
     openPalmThreshold: 0.62,
     displacement: 0.14,
     fastDisplacement: 0.1,
     minFastAverageVelocity: 0.55,
-    cooldown: 800,
-    minDuration: 80,
+    minDuration: 50,
     maxDuration: 650,
     horizontalRatio: 1.35,
     minRecentVelocity: 0.14,
     trackingLease: 700,
-    armRange: 0.06,
-    maxArmSpeed: 0.22,
   },
   high: {
     openPalmThreshold: 0.55,
     displacement: 0.1,
-    cooldown: 700,
-    minDuration: 65,
+    minDuration: 50,
     maxDuration: 700,
     horizontalRatio: 1.2,
     minRecentVelocity: 0.12,
     trackingLease: 750,
-    armRange: 0.075,
-    maxArmSpeed: 0.24,
   },
 };
 
@@ -79,20 +67,12 @@ export function openPalmThresholdForSensitivity(
   return sensitivityConfig[sensitivity].openPalmThreshold;
 }
 
-interface ArmFrame {
-  sample: PalmSample;
-  qualifies: boolean;
-}
-
-const ARM_WINDOW_SIZE = 4;
-const ARM_REQUIRED_FRAMES = 3;
-const ARM_FRAME_GAP_LIMIT = 350;
 const LOST_HAND_FRAME_LIMIT = 2;
 const LOST_HAND_TIME_LIMIT = 300;
 const MAX_REACQUIRE_JUMP = 0.14;
 const RESET_NO_HAND_FRAMES = 2;
-const RESET_NEUTRAL_FRAMES = 3;
-const RESET_NEUTRAL_DISTANCE = 0.11;
+const RESET_NEUTRAL_FRAMES = 2;
+const RESET_NEUTRAL_DISTANCE = 0.06;
 const MIN_DIRECTIONAL_STEPS = 2;
 const MIN_MEANINGFUL_STEP = 0.01;
 const MIN_DIRECTIONAL_AGREEMENT = 0.67;
@@ -111,8 +91,6 @@ function range(values: number[]) {
 
 export class SwipeDetector {
   private trajectory: PalmSample[] = [];
-  private armWindow: ArmFrame[] = [];
-  private lastTrigger = Number.NEGATIVE_INFINITY;
   private requiresReset = false;
   private resetFrames = 0;
   private neutralX = 0.5;
@@ -137,33 +115,21 @@ export class SwipeDetector {
 
   reset() {
     this.clearTracking();
-    this.armWindow = [];
     this.requiresReset = false;
     this.resetFrames = 0;
-    this.lastTrigger = Number.NEGATIVE_INFINITY;
     this.lastTimestamp = Number.NEGATIVE_INFINITY;
   }
 
   getState(timestamp: number): SwipeDetectorState {
-    const { cooldown } = sensitivityConfig[this.sensitivity];
-    if (
-      this.requiresReset ||
-      timestamp - this.lastTrigger < cooldown
-    ) {
+    if (this.requiresReset) {
       return "cooldown";
     }
     return this.trackingIsLive(timestamp) ? "armed" : "idle";
   }
 
   getArmProgress() {
-    if (this.trackingIsLive(this.lastTimestamp)) return ARM_REQUIRED_FRAMES;
-    return Math.min(
-      ARM_REQUIRED_FRAMES,
-      this.stableArmFrames(
-        sensitivityConfig[this.sensitivity].armRange,
-        sensitivityConfig[this.sensitivity].maxArmSpeed,
-      ).length,
-    );
+    // Kept for the worker metrics contract; no stationary locking phase.
+    return this.trackingIsLive(this.lastTimestamp) ? 3 : 0;
   }
 
   push(input: PalmSample): SwipeDetection | undefined {
@@ -196,11 +162,9 @@ export class SwipeDetector {
     const qualifyingOpen =
       sample.open && sample.confidence >= config.openPalmThreshold;
 
-    if (
-      this.requiresReset ||
-      sample.timestamp - this.lastTrigger < config.cooldown
-    ) {
-      this.handleReset(sample, qualifyingOpen, config.cooldown);
+    if (this.requiresReset) {
+      this.handleReset(sample);
+      if (!this.requiresReset && qualifyingOpen) this.beginTracking(sample);
       return undefined;
     }
 
@@ -213,7 +177,6 @@ export class SwipeDetector {
           sample.timestamp - this.lastHandAt > LOST_HAND_TIME_LIMIT
         ) {
           this.clearTracking();
-          this.armWindow = [];
         }
         return undefined;
       }
@@ -243,7 +206,6 @@ export class SwipeDetector {
         this.trajectory = this.trajectory.slice(-1);
         if (this.nonExtendedFrames >= NON_EXTENDED_FRAME_LIMIT) {
           this.clearTracking();
-          this.armWindow = [];
         }
         return undefined;
       }
@@ -267,83 +229,31 @@ export class SwipeDetector {
       this.clearTracking();
     }
 
-    this.updateArmWindow(sample, qualifyingOpen);
     if (!qualifyingOpen) return undefined;
-    const qualifying = this.stableArmFrames(
-      config.armRange,
-      config.maxArmSpeed,
-      true,
-    );
-    if (qualifying.length < ARM_REQUIRED_FRAMES) return undefined;
+    this.beginTracking(sample);
+    return undefined;
+  }
 
+  private beginTracking(sample: PalmSample) {
     this.tracking = true;
-    this.lastOpenAt = qualifying.at(-1)?.timestamp ?? sample.timestamp;
+    this.lastOpenAt = sample.timestamp;
     this.lastHandAt = sample.timestamp;
-    this.lockConfidence = Math.max(
-      ...qualifying.map((frame) => frame.confidence),
-    );
-    // Arming proves intent; it must not contribute motion toward the swipe.
+    this.lockConfidence = sample.confidence;
     this.trajectory = [sample];
-    this.armWindow = [];
-    return this.track(sample, config);
-  }
-
-  private updateArmWindow(sample: PalmSample, qualifies: boolean) {
-    const previous = this.armWindow.at(-1)?.sample;
-    if (
-      previous &&
-      sample.timestamp - previous.timestamp > ARM_FRAME_GAP_LIMIT
-    ) {
-      this.armWindow = [];
-    }
-    this.armWindow.push({ sample, qualifies });
-    this.armWindow = this.armWindow.slice(-ARM_WINDOW_SIZE);
-  }
-
-  private stableArmFrames(
-    maxRange: number,
-    maxSpeed: number,
-    requireLatest = false,
-  ) {
-    let best: PalmSample[] = [];
-    const latestIndex = this.armWindow.length - 1;
-
-    // The window contains only four frames, so examining every subset keeps
-    // the 3-of-4 rule exact while allowing one classifier miss or outlier.
-    for (let mask = 1; mask < 1 << this.armWindow.length; mask += 1) {
-      if (requireLatest && (mask & (1 << latestIndex)) === 0) continue;
-      const samples = this.armWindow
-        .filter(
-          (frame, index) =>
-            frame.qualifies && (mask & (1 << index)) !== 0,
-        )
-        .map((frame) => frame.sample);
-      const duration =
-        (samples.at(-1)?.timestamp ?? 0) -
-        (samples[0]?.timestamp ?? 0);
-      const xRange = range(samples.map((sample) => sample.x));
-      const yRange = range(samples.map((sample) => sample.y));
-      const stableSpeed =
-        samples.length === 1 ||
-        (duration > 0 &&
-          (xRange * 1_000) / duration <= maxSpeed &&
-          (yRange * 1_000) / duration <= maxSpeed);
-      if (
-        samples.length > best.length &&
-        xRange <= maxRange &&
-        yRange <= maxRange &&
-        stableSpeed
-      ) {
-        best = samples;
-      }
-    }
-    return best;
+    this.lostHandFrames = 0;
+    this.nonExtendedFrames = 0;
   }
 
   private track(
     sample: PalmSample,
     config: SensitivityConfig,
   ): SwipeDetection | undefined {
+    const previous = this.trajectory.at(-1);
+    if (previous && this.trajectory.every((point) => Math.abs(point.x - this.trajectory[0].x) < MIN_MEANINGFUL_STEP)
+      && Math.abs(sample.x - previous.x) >= MIN_MEANINGFUL_STEP) {
+      // Standing still is not part of the swipe's duration or speed.
+      this.trajectory = [previous];
+    }
     if (this.trajectory.at(-1)?.timestamp !== sample.timestamp) {
       this.trajectory.push(sample);
     }
@@ -425,19 +335,13 @@ export class SwipeDetector {
       confidence: this.lockConfidence,
     };
     this.neutralX = first.x;
-    this.lastTrigger = sample.timestamp;
     this.requiresReset = true;
     this.resetFrames = 0;
-    this.armWindow = [];
     this.clearTracking();
     return detection;
   }
 
-  private handleReset(
-    sample: PalmSample,
-    qualifyingOpen: boolean,
-    cooldown: number,
-  ) {
+  private handleReset(sample: PalmSample) {
     if (!sample.handPresent) {
       this.resetFrames += 1;
       if (this.resetFrames >= RESET_NO_HAND_FRAMES) {
@@ -447,8 +351,7 @@ export class SwipeDetector {
     }
 
     const canRecenter =
-      sample.timestamp - this.lastTrigger >= cooldown &&
-      qualifyingOpen &&
+      sample.palmExtended &&
       Math.abs(sample.x - this.neutralX) <= RESET_NEUTRAL_DISTANCE;
     if (!canRecenter) {
       this.resetFrames = 0;
@@ -464,7 +367,6 @@ export class SwipeDetector {
   private finishReset() {
     this.requiresReset = false;
     this.resetFrames = 0;
-    this.armWindow = [];
     this.clearTracking();
   }
 

@@ -50,8 +50,10 @@ function clampUnit(value: number) {
 
 export function extractHeadRoll(
   landmarks?: readonly FacePoint[],
+  frameWidth = 1,
+  frameHeight = 1,
 ): HeadRollMeasurement {
-  if (!landmarks?.length) {
+  if (!landmarks?.length || !Number.isFinite(frameWidth) || !Number.isFinite(frameHeight) || frameWidth <= 0 || frameHeight <= 0) {
     return { facePresent: false, rollDegrees: 0, quality: 0 };
   }
 
@@ -65,7 +67,9 @@ export function extractHeadRoll(
     ? [first, second]
     : [second, first];
   const dx = right.x - left.x;
-  const dy = right.y - left.y;
+  // MediaPipe normalizes each axis separately. Restore the pixel aspect
+  // ratio before measuring angles so every webcam uses physical degrees.
+  const dy = (right.y - left.y) * frameHeight / frameWidth;
   const eyeDistance = Math.hypot(dx, dy);
   const depthRatio =
     Math.abs((right.z ?? 0) - (left.z ?? 0)) /

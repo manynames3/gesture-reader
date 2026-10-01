@@ -100,6 +100,7 @@ export function GestureReaderApp() {
   const saveTimerRef =
     useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pageTurnInFlightRef = useRef(false);
+  const pendingPageTurnsRef = useRef(0);
   const importInFlightRef = useRef(false);
   const refreshGenerationRef = useRef(0);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -470,14 +471,7 @@ export function GestureReaderApp() {
       if (!activeDocument) {
         return { status: "rejected", reason: "notReady" };
       }
-      if (pageTurnInFlightRef.current) {
-        return {
-          status: "rejected",
-          reason: "busy",
-          page: activeDocument.reading.currentPage,
-        };
-      }
-
+      pendingPageTurnsRef.current += 1;
       pageTurnInFlightRef.current = true;
       setPageAnimating(true);
       let result: NavigationResult;
@@ -489,8 +483,9 @@ export function GestureReaderApp() {
       } catch {
         result = { status: "rejected", reason: "timeout" };
       } finally {
-        pageTurnInFlightRef.current = false;
-        setPageAnimating(false);
+        pendingPageTurnsRef.current -= 1;
+        pageTurnInFlightRef.current = pendingPageTurnsRef.current > 0;
+        setPageAnimating(pageTurnInFlightRef.current);
       }
 
       if (result.status === "confirmed") {
@@ -785,7 +780,8 @@ export function GestureReaderApp() {
                 } else {
                   setCameraStatus("requesting");
                   setGestureEnabled(true);
-                  setGesturePanelOpen(true);
+                  // Begin reading immediately; setup is available on demand.
+                  setGesturePanelOpen(false);
                 }
               }}
               aria-pressed={gestureEnabled}
@@ -987,7 +983,7 @@ export function GestureReaderApp() {
           </p>
           <dl className="gesture-start-guide" aria-label="Hands-free reading guide">
             <div><dt>Head tilt</dt><dd>Right → next page. Left → previous page.</dd></div>
-            <div><dt>Open palm</dt><dd>Hold still to lock, then swipe right → next or left → previous.</dd></div>
+            <div><dt>Open palm</dt><dd>Swipe right → next or left → previous. Return to center to repeat.</dd></div>
             <div><dt>Your choice</dt><dd>Camera stays off until you enable gestures. Keyboard and buttons always work.</dd></div>
           </dl>
           <div className="hero-actions">
@@ -1001,7 +997,7 @@ export function GestureReaderApp() {
             </button>
             <span>or drop files anywhere</span>
           </div>
-          <p className="gesture-start-note">Open your PDF, choose Enable gestures, then Fit whole page for hands-free reading. Made for sheet music, recipes, and manuals—not just an empty desk.</p>
+          <p className="gesture-start-note">Open your PDF, choose Enable gestures, then Fit whole page for hands-free reading. Head tilt starts automatically; choose Gesture controls to switch to palm swipes. Made for playing music, conducting, and reading with limited hand movement.</p>
         </div>
         <div className="gesture-demo" aria-label="Swipe right for the next page">
           <div className="gesture-demo__halo gesture-demo__halo--one" />
@@ -1259,7 +1255,7 @@ export function GestureReaderApp() {
 
       {!isDesktop && !loading && <OfflineStatus />}
       <footer className="library-footer">
-        <span>Gesture Reader 1.1.0</span>
+        <span>Gesture Reader 1.2.0</span>
         <span>No account · No uploads · No telemetry</span>
       </footer>
 
