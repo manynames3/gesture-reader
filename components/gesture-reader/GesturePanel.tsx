@@ -125,7 +125,7 @@ export function GesturePanel({
       : loadPreference<boolean>("gesture-reader:inverted", false),
   );
   const [showPreview, setShowPreview] = useState<boolean>(() => typeof window === "undefined" ? true : loadPreference<boolean>("gesture-reader:preview", true));
-  const [headTiltDegrees, setHeadTiltDegrees] = useState(() => typeof window === "undefined" ? 12 : Math.min(25, Math.max(3, loadPreference("gesture-reader:head-tilt-degrees", 12))));
+  const [headTiltDegrees, setHeadTiltDegrees] = useState(() => typeof window === "undefined" ? 8 : Math.min(25, Math.max(3, loadPreference("gesture-reader:head-tilt-degrees", 8))));
   const headTiltDegreesRef = useRef(headTiltDegrees);
   const [fps, setFps] = useState(0);
   const [confidence, setConfidence] = useState(0);

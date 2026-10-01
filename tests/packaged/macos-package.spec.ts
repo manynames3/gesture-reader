@@ -136,7 +136,7 @@ test("a DMG-installed copy reads offline, runs local models and restores its man
     await expect(page.getByRole("alert")).not.toContainText("invoking remote method");
     await page.getByRole("button", { name: "Dismiss import report" }).click();
     await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
-    await page.evaluate(() => {
+    const installCamera = () => {
       let requests = 0;
       const tracks: MediaStreamTrack[] = [];
       MediaDevices.prototype.getUserMedia = async (constraints) => {
@@ -161,7 +161,8 @@ test("a DMG-installed copy reads offline, runs local models and restores its man
       };
       MediaDevices.prototype.enumerateDevices = async () => [];
       Object.assign(window, { packagedCameraState: () => ({ requests, tracks: tracks.map((track) => track.readyState) }) });
-    });
+    };
+    await page.evaluate(installCamera);
     await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
     await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await expect(page.getByLabel("Gesture tracking metrics")).toContainText(/[1-9]\d* FPS/, { timeout: 20_000 });
@@ -212,6 +213,10 @@ test("a DMG-installed copy reads offline, runs local models and restores its man
       const window = BrowserWindow.getAllWindows()[0]; window.setSize(360, 480); window.webContents.setZoomFactor(2);
     });
     await expect.poll(() => reopened.evaluate(() => innerWidth)).toBe(180);
+    // Relaunch creates a new page: keep the second camera synthetic too.
+    // Otherwise this layout/storage test can accidentally turn pages from
+    // real user head movement instead of testing its intended workload.
+    await reopened.evaluate(installCamera);
     await reopened.getByRole("button", { name: "Enable gestures", exact: true }).click();
     await reopened.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await expect(reopened.getByRole("dialog", { name: "Gesture controls" })).toHaveAttribute("aria-modal", "true");

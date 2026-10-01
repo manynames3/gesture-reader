@@ -29,6 +29,33 @@ function run(detector: SwipeDetector, samples: PalmSample[]) {
 }
 
 describe("SwipeDetector", () => {
+  it.each([
+    [0.3, 0.35, 0.4],
+    [0.7, 0.65, 0.6],
+  ])("accepts mirrored swipes at the same fast-path boundary (%s)", (start, middle, end) => {
+    const detections = run(new SwipeDetector(), [
+      palm(0, start), palm(50, middle), palm(100, end),
+    ]);
+    expect(detections).toEqual([
+      expect.objectContaining({ direction: end > start ? "right" : "left" }),
+    ]);
+  });
+  it.each(["low", "medium", "high"] as const)("uses symmetric small-step thresholds at %s sensitivity", (sensitivity) => {
+    for (const sign of [-1, 1]) {
+      const start = sign > 0 ? 0.3 : 0.7;
+      const detections = run(new SwipeDetector(sensitivity), Array.from({ length: 19 }, (_, index) =>
+        palm(index * 20, start + sign * index * 0.01),
+      ));
+      expect(detections).toEqual([expect.objectContaining({ direction: sign > 0 ? "right" : "left" })]);
+    }
+  });
+
+  it.each([1, -1])("still rejects a genuinely short swipe (%s)", (sign) => {
+    const start = sign > 0 ? 0.3 : 0.7;
+    expect(run(new SwipeDetector(), [
+      palm(0, start), palm(50, start + sign * 0.049), palm(100, start + sign * 0.099),
+    ])).toHaveLength(0);
+  });
   it("tracks an open palm immediately without a stationary lock", () => {
     const detector = new SwipeDetector();
 

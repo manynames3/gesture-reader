@@ -1255,7 +1255,7 @@ export function GestureReaderApp() {
 
       {!isDesktop && !loading && <OfflineStatus />}
       <footer className="library-footer">
-        <span>Gesture Reader 1.2.0</span>
+        <span>Gesture Reader 1.2.1</span>
         <span>No account · No uploads · No telemetry</span>
       </footer>
 

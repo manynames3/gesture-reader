@@ -78,6 +78,9 @@ const MIN_MEANINGFUL_STEP = 0.01;
 const MIN_DIRECTIONAL_AGREEMENT = 0.67;
 const MAX_SINGLE_STEP_SHARE = 0.8;
 const NON_EXTENDED_FRAME_LIMIT = 2;
+// Mirrored decimal coordinates can round to opposite sides of an exact
+// threshold. This sub-pixel tolerance makes the same motion symmetric.
+const MOTION_EPSILON = 1e-9;
 
 function clampUnit(value: number) {
   return Math.min(1, Math.max(0, value));
@@ -249,8 +252,8 @@ export class SwipeDetector {
     config: SensitivityConfig,
   ): SwipeDetection | undefined {
     const previous = this.trajectory.at(-1);
-    if (previous && this.trajectory.every((point) => Math.abs(point.x - this.trajectory[0].x) < MIN_MEANINGFUL_STEP)
-      && Math.abs(sample.x - previous.x) >= MIN_MEANINGFUL_STEP) {
+    if (previous && this.trajectory.every((point) => Math.abs(point.x - this.trajectory[0].x) + MOTION_EPSILON < MIN_MEANINGFUL_STEP)
+      && Math.abs(sample.x - previous.x) + MOTION_EPSILON >= MIN_MEANINGFUL_STEP) {
       // Standing still is not part of the swipe's duration or speed.
       this.trajectory = [previous];
     }
@@ -275,11 +278,11 @@ export class SwipeDetector {
     const reachesFastThreshold =
       config.fastDisplacement !== undefined &&
       config.minFastAverageVelocity !== undefined &&
-      absoluteDx >= config.fastDisplacement &&
-      averageVelocity >= config.minFastAverageVelocity;
+      absoluteDx + MOTION_EPSILON >= config.fastDisplacement &&
+      averageVelocity + MOTION_EPSILON >= config.minFastAverageVelocity;
     if (
       direction === 0 ||
-      (absoluteDx < config.displacement && !reachesFastThreshold)
+      (absoluteDx + MOTION_EPSILON < config.displacement && !reachesFastThreshold)
     ) {
       return undefined;
     }
@@ -287,14 +290,14 @@ export class SwipeDetector {
     const verticalRange = range(
       this.trajectory.map((candidate) => candidate.y),
     );
-    if (Math.abs(dx) < verticalRange * config.horizontalRatio) {
+    if (Math.abs(dx) + MOTION_EPSILON < verticalRange * config.horizontalRatio) {
       return undefined;
     }
 
     const meaningfulSteps = this.trajectory
       .slice(1)
       .map((candidate, index) => candidate.x - this.trajectory[index].x)
-      .filter((delta) => Math.abs(delta) >= MIN_MEANINGFUL_STEP);
+      .filter((delta) => Math.abs(delta) + MOTION_EPSILON >= MIN_MEANINGFUL_STEP);
     const agreeingSteps = meaningfulSteps.filter(
       (delta) => Math.sign(delta) === direction,
     );
@@ -310,7 +313,7 @@ export class SwipeDetector {
       agreeingSteps.length < MIN_DIRECTIONAL_STEPS ||
       agreeingSteps.length / meaningfulSteps.length <
         MIN_DIRECTIONAL_AGREEMENT ||
-      largestStep / agreeingTravel > MAX_SINGLE_STEP_SHARE
+      largestStep / agreeingTravel > MAX_SINGLE_STEP_SHARE + MOTION_EPSILON
     ) {
       return undefined;
     }
@@ -324,7 +327,7 @@ export class SwipeDetector {
         ? Math.abs(recentDx) / (recentDuration / 1_000)
         : 0;
     if (
-      recentVelocity < config.minRecentVelocity ||
+      recentVelocity + MOTION_EPSILON < config.minRecentVelocity ||
       Math.sign(recentDx) !== direction
     ) {
       return undefined;
@@ -352,7 +355,7 @@ export class SwipeDetector {
 
     const canRecenter =
       sample.palmExtended &&
-      Math.abs(sample.x - this.neutralX) <= RESET_NEUTRAL_DISTANCE;
+      Math.abs(sample.x - this.neutralX) <= RESET_NEUTRAL_DISTANCE + MOTION_EPSILON;
     if (!canRecenter) {
       this.resetFrames = 0;
       return;
