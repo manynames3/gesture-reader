@@ -20,6 +20,7 @@ type WorkerRequest =
       type: "initialize";
       sensitivity: GestureSensitivity;
       mode: GestureInputMode;
+      headTiltDegrees?: number;
     }
   | {
       type: "frame";
@@ -30,8 +31,9 @@ type WorkerRequest =
       type: "settings";
       sensitivity: GestureSensitivity;
       mode: GestureInputMode;
+      headTiltDegrees?: number;
     }
-  | { type: "reset" }
+  | { type: "reset"; recenter?: boolean }
   | { type: "dispose" };
 
 type WorkerResponse =
@@ -116,8 +118,8 @@ function extractPalm(result: GestureRecognizerResult, timestamp: number) {
     confidence,
     open,
     handPresent: true,
-    // The classifier is the only signal allowed to arm. Once armed, landmark
-    // geometry distinguishes an extended palm under motion blur from a fist.
+    // The classifier starts tracking; landmark geometry then distinguishes
+    // an extended palm under motion blur from a fist.
     palmExtended: palmLandmarksAreExtended(landmarks),
   };
 }
@@ -225,10 +227,12 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const message = event.data;
   try {
     if (message.type === "initialize") {
+      headTiltDetector.setTiltDegrees(message.headTiltDegrees);
       await initialize(message.sensitivity, message.mode);
       return;
     }
     if (message.type === "settings") {
+      headTiltDetector.setTiltDegrees(message.headTiltDegrees);
       if (message.mode !== activeMode) {
         await initialize(message.sensitivity, message.mode);
       } else if (message.mode === "palm") {
@@ -242,7 +246,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       if (activeMode === "palm") {
         swipeDetector.reset();
       } else {
-        headTiltDetector.reset();
+        if (message.recenter) headTiltDetector.reset();
+        else headTiltDetector.resetMotion();
       }
       return;
     }
@@ -309,7 +314,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             message.bitmap,
             message.timestamp,
           );
-          const measurement = extractHeadRoll(result.faceLandmarks[0]);
+          const measurement = extractHeadRoll(result.faceLandmarks[0], message.bitmap.width, message.bitmap.height);
           const detection = headTiltDetector.push({
             timestamp: message.timestamp,
             ...measurement,
@@ -321,7 +326,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
               ...detection,
             });
           }
-          const metrics = headTiltDetector.getMetrics(message.timestamp);
+          const metrics = headTiltDetector.getMetrics();
           post({
             type: "frameDone",
             mode: "head",

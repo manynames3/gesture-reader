@@ -31,6 +31,7 @@ test("the actual native window resizes to a compact desk view without losing con
       };
     });
     await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await page.getByRole("button", { name: "Fit whole page", exact: true }).click();
     await expect(page.frameLocator("pdfjs-viewer-element iframe").locator("#scaleSelect")).toHaveValue("page-fit");
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(360, 480));
@@ -110,6 +111,7 @@ test("real 200 percent interface zoom preserves reading and setup controls at na
     await expect.poll(() => page.evaluate(() => innerWidth)).toBe(360);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor())).toBe(2);
     await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
+    await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
     await capture("native-200-percent-setup.png");
     await expect(page.getByRole("button", { name: "Turn off gestures", exact: true })).toBeInViewport();
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(360, 480));

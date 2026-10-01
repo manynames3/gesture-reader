@@ -1506,6 +1506,19 @@ select:focus-visible {
   padding: 0;
 }
 
+.sensitivity-control input[type="range"] {
+  width: 100%;
+  min-height: 2.5rem;
+  accent-color: var(--lime);
+}
+
+.sensitivity-control > p {
+  margin: 0.25rem 0 0;
+  color: var(--paper-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
 .segmented-control {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

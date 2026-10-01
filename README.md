@@ -9,8 +9,8 @@ It turns one page at a time when the computer's camera recognizes either an
 open-palm swipe or a deliberate head tilt—all vision processing happens on the
 device. Tilt or swipe right to advance; tilt or swipe left to go back.
 
-The application combines the complete PDF.js reading experience with an
-intentional, conservative gesture state machine. PDFs, thumbnails, reading
+The application combines the complete PDF.js reading experience with a
+responsive gesture state machine with a neutral reset between turns. PDFs, thumbnails, reading
 progress, bookmarks, camera frames, and hand landmarks are never sent to an
 application server.
 
@@ -18,8 +18,13 @@ application server.
 
 PDF readers assume that reaching for a mouse, trackpad, or keyboard is always
 convenient. It is not when both hands are occupied: playing from sheet music,
-presenting, following a workshop manual, cooking from a recipe, or simply
+conducting, presenting, following a workshop manual, cooking from a recipe, or simply
 reading from a little farther away.
+
+Head tilt also provides an alternative for readers with limited hand movement,
+including quadriplegic readers who can comfortably control a head tilt. The
+required movement can be adjusted; recognition with those users still needs
+physical validation.
 
 Gesture Reader was created to make that one frequent action—turning a
 page—possible without touching the computer, while keeping the document reader
@@ -38,6 +43,8 @@ The project follows three principles:
 
 ## Recent improvements
 
+- Head tilt by default, immediate palm tracking, no timed hold/cooldown, and
+  ordered rapid turns. Adjustable head movement stays separate from speed.
 - Responsive reader and compact gesture setup, with an explicit **Fit whole page** action.
 - Page-turn success shown only after PDF.js confirms the requested page; recoverable camera/model failures have retry controls.
 - Keyboard focus restoration, accessible dialogs, clearer camera-off controls, and better narrow-window behavior.
@@ -78,10 +85,16 @@ hands-on testing. No claim of “works every time” is made.
   head tilt or palm swipe goes back.
 - Mirrored preview, sensitivity settings, direction inversion, and a
   two-direction calibration check.
-- Visible confidence, palm-lock, cooldown, and reset feedback.
+- Head tilt by default, with an easy switch to palm swipes. No stationary palm
+  lock, deliberate head hold, or fixed cooldown; return to center to repeat.
+- Automatic comfortable-head centering on camera activation; adjustable
+  3–25° head movement independent of response speed. Settings and camera choice
+  are remembered. Optional practice checks never turn the document.
+- Visible tracking, neutral-reset, and confirmed-page feedback.
 - Recognition pauses during dialogs, text entry, window blur, or backgrounding.
   While a page turn is pending, camera frames keep flowing so the detector can
-  observe the required hand/head reset, but extra turn events are suppressed.
+  observe hand/head reset. Accepted turns are queued in order, so two quick
+  gestures produce two turns even while the first page is opening.
 - Camera tracks are stopped immediately when gestures are disabled or the app
   is hidden or closed.
 
@@ -132,6 +145,25 @@ delivery is asynchronous: the adapter returns `confirmed`, `boundary`,
 `notReady`, `busy`, or `timeout`, so the camera UI cannot mistake detector
 cooldown for a completed page turn.
 
+The bus serializes commands against the reader that was subscribed when each
+command arrived. A queued relative turn chooses its absolute target only after
+the preceding turn finishes. Closing a PDF cancels its queued requests instead
+of delivering them to a different document.
+
+### Responsiveness targets (1.2)
+
+Designed for playing music, conducting, and readers who prefer head movement
+to hand controls. Supported camera distance remains 0.5–1.5 meters. Head tilt
+starts automatically when the camera is enabled; setup opens only on request.
+Small comfortable movements can be selected without adding a delay.
+
+The physical acceptance targets are at least 9 of 10 deliberate attempts on
+the first try, no more than one unwanted turn in 10 minutes of normal activity,
+and a visible response within 200 ms after reaching the movement threshold.
+Recognition delay and PDF confirmation delay must both be measured. These are
+targets, **not measured physical-camera results**. Automated synthetic traces
+and model-throughput checks cannot establish user recognition accuracy.
+
 ### PDF integration
 
 The project embeds the full PDF.js viewer through the pinned
@@ -156,28 +188,29 @@ vision worker; the camera stream stays connected.
 
 The deterministic swipe detector then:
 
-1. Arms after three of four stationary `Open_Palm` frames. A velocity gate keeps
-   an entering hand from counting as a swipe; the confidence threshold ranges
+1. Starts tracking an `Open_Palm` immediately; no stationary lock is required.
+   The confidence threshold ranges
    from `0.55` in Quick mode to `0.70` in Steady mode.
-2. Tracks palm-center motion for 65–700 ms, depending on sensitivity.
+2. Tracks palm-center motion for 50–700 ms, depending on sensitivity.
 3. Requires horizontal displacement of 10–18% of frame width plus consistent
    movement in the detected direction. Balanced mode has a velocity-qualified
    10% fast path, allowing a deliberate swipe to turn on its second motion
    frame without weakening the slow-movement and spike rejection gates.
 4. Compares horizontal travel with the full vertical path, rejecting spikes,
    deep arcs, and ordinary hand repositioning.
-5. Uses finger-extension geometry after lock, tolerating classifier blur while
+5. Uses finger-extension geometry during tracking, tolerating classifier blur while
    canceling a closed fist. A dropped landmark frame re-anchors the trajectory
    and requires fresh continuous movement.
 6. Emits exactly one direction, then latches until a hand-out or neutral
-   recenter and a 700–900 ms cooldown.
+   recenter. Two neutral observations reset it, without a timed cooldown.
 
 Head mode derives mirrored-preview roll from the eye line reported by Face
-Landmarker. It learns the reader's comfortable centered position, then requires
-a 10–15° tilt held for 220–420 ms depending on sensitivity. A tilt emits one
-page turn, latches through cooldown, and cannot fire again until the reader
+Landmarker, corrected for camera aspect ratio. It automatically learns the
+reader's comfortable centered position, then checks a configurable 3–25° tilt
+across consecutive observations rather than imposing a timed hold. A tilt emits one
+page turn and cannot fire again until the reader
 returns to the learned neutral band. Short spikes, oscillation, face loss, and
-remaining tilted are rejected; **Recenter head position** explicitly relearns
+remaining tilted cannot cause repeated turns; **Recenter head position** explicitly relearns
 the baseline. A right tilt issues the next-page command; a left tilt issues the
 previous-page command. Palm swipes use the same right-to-next, left-to-previous
 mapping. Directions refer to movement in the mirrored setup preview, independent
@@ -200,7 +233,8 @@ detector stuck in cooldown.
 | Share React/TypeScript across web and desktop | Reader behavior, gesture UX, and tests remain consistent across both surfaces. | Platform differences must stay behind explicit interfaces. |
 | Package macOS with Electron | Chromium provides predictable behavior for PDF.js, camera APIs, workers, WebAssembly, and the existing React renderer. | The application bundle is larger than a native or Tauri build. |
 | Keep recognition in a worker | Camera inference cannot block PDF scrolling or UI interaction. | Frames and worker lifecycle require careful coordination. |
-| Use deterministic motion state machines | Palm lock, displacement, head hold, neutral reset, cooldown, and false-positive behavior can be tested without retraining a model. | Thresholds still need physical calibration for different cameras, posture, and lighting. |
+| Use movement and neutral reset instead of timed locks/cooldowns | Deliberate movements can respond quickly, including repeated turns; synthetic motion behavior remains testable. | Ordinary movements can resemble requests. The chosen physical target accepts at most one unintended turn per 10 minutes and still requires user testing. |
+| Queue accepted turns and keep camera frames flowing | A quick second request is preserved, and returning to center during page loading is observed. | Slow PDFs can still delay queued turns; confirmed page changes remain required. |
 | Acknowledge page turns through PDF.js | The UI says a page opened only after the viewer confirms the exact target; a dropped command can no longer look successful. | Each turn may wait briefly for confirmation and performs one safe absolute-page retry before reporting failure. |
 | Keep web and macOS libraries separate | No account, backend, or synchronization service is required; privacy boundaries stay obvious. | Reading state does not move automatically between installations. |
 | Copy desktop imports into managed storage | The application can offer a stable library and safe removal without mutating the original file. | Imported PDFs consume additional local disk space. |
@@ -379,18 +413,16 @@ Page Width and other choices for closer reading.
 ### Palm swipe
 
 1. Open a PDF and select **Enable gestures**.
-2. Choose the camera and position your full wrist and all five fingers inside
+2. Open **Gesture controls**, select **Palm swipe**, and choose the camera if needed. Position your full wrist and all five fingers inside
    the preview.
-3. Hold the open palm still until the lock reaches **3/3**.
-4. Swipe right to go to the next page or left to go to the previous page.
-5. Move the hand out of view briefly after a turn so the detector can reset.
+3. Swipe right to go to the next page or left to go to the previous page; no lock is needed.
+4. Return the hand to its starting point, or lower it briefly, before another swipe. The return stroke does not turn a page.
 
 ### Head tilt
 
-1. Select **Head tilt** under **Control method**.
+1. **Enable gestures** starts in head mode by default; a previously chosen mode is remembered.
 2. Look comfortably toward the screen while the camera learns your center.
-3. Tilt **right for the next page** or **left for the previous page** by roughly
-   12–15°, then hold until the progress reaches 100%.
+3. Tilt **right for the next page** or **left for the previous page**. No timed hold is required. **Head tilt amount** adjusts the comfortable turning point from 3° to 25°.
 4. Return fully to center before the next page turn.
 5. Select **Recenter head position** after moving the camera or changing your
    reading posture.
@@ -437,11 +469,11 @@ npx tsc --noEmit
 
 The test suite covers:
 
-- Palm arming, jitter, vertical movement, confidence loss, motion blur,
-  responsive fast-path recognition, cooldown, neutral reset, boundaries, and
+- Immediate palm tracking, jitter, vertical movement, confidence loss, motion blur,
+  responsive fast-path recognition, rapid neutral reset, boundaries, and
   repeated-frame suppression.
-- Head-roll geometry, neutral calibration, deliberate holds at 8/12/18 FPS,
-  face loss, posture drift, spike rejection, cooldown, return-to-center, noisy
+- Aspect-corrected head-roll geometry, neutral calibration, brief tilts at 8/12/18 FPS,
+  face loss, posture drift, spike rejection, return-to-center, adjustable movement, noisy
   right-to-left sequences, and source-aware page-direction routing.
 - Web import, SHA-256 deduplication, IndexedDB state, removal, and quota errors.
 - Rejected/stalled storage estimates leave reading and import usable; unavailable

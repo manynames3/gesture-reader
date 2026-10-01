@@ -95,6 +95,7 @@ export interface GestureSettings {
   mode: GestureInputMode;
   inverted: boolean;
   showPreview: boolean;
+  headTiltDegrees?: number;
 }
 
 export type GestureStatus =

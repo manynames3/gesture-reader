@@ -82,10 +82,11 @@ test("a fresh production install can reopen its library and read a PDF offline",
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(page.getByText("Page 2 of 3", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Enable gestures", exact: true }).click();
-  await expect(page.getByText("Raise your open palm into view", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByLabel("Gesture tracking metrics")).toContainText(/[1-9]\d* FPS/);
-  await page.getByRole("button", { name: "Head tilt", exact: true }).click();
+  await page.getByRole("button", { name: "Gesture controls", exact: true }).click();
   await expect(page.getByText("Center your face in view", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByLabel("Gesture tracking metrics")).toContainText(/[1-9]\d* FPS/);
+  await page.getByRole("button", { name: "Palm swipe", exact: true }).click();
+  await expect(page.getByText("Raise your open palm into view", { exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByLabel("Gesture tracking metrics")).toContainText(/[1-9]\d* FPS/);
   await page.getByRole("button", { name: "Turn off gestures", exact: true }).click();
   expect(externalRequests).toEqual([]);

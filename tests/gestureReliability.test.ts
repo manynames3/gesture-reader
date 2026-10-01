@@ -34,7 +34,7 @@ function runDetailed(detector: SwipeDetector, samples: PalmSample[]) {
   });
 }
 
-describe("SwipeDetector real-world traces", () => {
+describe("SwipeDetector synthetic motion traces", () => {
   it("recognizes a balanced left swipe after Open_Palm confidence is lost to motion blur", () => {
     const detector = new SwipeDetector("medium");
     const detections = run(detector, [
@@ -565,7 +565,7 @@ describe("SwipeDetector real-world traces", () => {
     }
   });
 
-  it("requires a stable palm instead of arming while the hand enters", () => {
+  it("accepts a continuous open-palm swipe while the hand enters", () => {
     const detector = new SwipeDetector("medium");
     const detections = run(detector, [
       palm(0, 0.82),
@@ -575,12 +575,11 @@ describe("SwipeDetector real-world traces", () => {
       palm(268, 0.47),
     ]);
 
-    expect(detections).toHaveLength(0);
-    expect(detector.getArmProgress()).toBe(1);
-    expect(detector.getState(268)).toBe("idle");
+    expect(detections).toEqual([expect.objectContaining({ direction: "left" })]);
+    expect(detector.getState(268)).toBe("cooldown");
   });
 
-  it("does not count a slow moving entry as the start of a swipe", () => {
+  it("tracks a moving entry and applies the selected displacement threshold", () => {
     for (const sensitivity of ["low", "medium", "high"] as const) {
       const detector = new SwipeDetector(sensitivity);
       const detections = run(detector, [
@@ -590,19 +589,16 @@ describe("SwipeDetector real-world traces", () => {
         palm(201, 0.55),
       ]);
 
-      expect(detections, sensitivity).toHaveLength(0);
-      expect(detector.getState(201), sensitivity).toBe("idle");
+      expect(detections, sensitivity).toHaveLength(sensitivity === "low" ? 0 : 1);
     }
   });
 
-  it("expires partial palm locks across long capture gaps", () => {
+  it("reanchors rather than counting displacement across a long capture gap", () => {
     const detector = new SwipeDetector("medium");
     detector.push(palm(0, 0.7));
     detector.push(palm(65, 0.7));
-    detector.push(palm(10_000, 0.7));
-
-    expect(detector.getArmProgress()).toBe(1);
-    expect(detector.getState(10_000)).toBe("idle");
+    expect(detector.push(palm(10_000, 0.4))).toBeUndefined();
+    expect(detector.getState(10_000)).toBe("armed");
   });
 
   it("emits exactly once when the hand recoils after a page turn", () => {
@@ -657,13 +653,7 @@ describe("SwipeDetector real-world traces", () => {
     expect(detections[0]?.direction).toBe("left");
   });
 
-  it("enforces each sensitivity cooldown before accepting a reset second swipe", () => {
-    const cooldowns = {
-      low: 900,
-      medium: 800,
-      high: 700,
-    } as const;
-
+  it("accepts a second swipe immediately after reset in every sensitivity mode", () => {
     for (const sensitivity of ["low", "medium", "high"] as const) {
       const detector = new SwipeDetector(sensitivity);
       const first = run(detector, [
@@ -686,25 +676,15 @@ describe("SwipeDetector real-world traces", () => {
           handPresent: false,
         }),
       ]);
-      const premature = run(detector, [
+      const second = run(detector, [
         palm(560, 0.28),
         palm(640, 0.4),
         palm(720, 0.52),
         palm(800, 0.62),
       ]);
-      const start = 360 + cooldowns[sensitivity] + 100;
-      const second = run(detector, [
-        palm(start, 0.28),
-        palm(start + 60, 0.28),
-        palm(start + 120, 0.28),
-        palm(start + 200, 0.39),
-        palm(start + 280, 0.52),
-      ]);
-
       expect(first, sensitivity).toEqual([
         expect.objectContaining({ direction: "left" }),
       ]);
-      expect(premature, sensitivity).toHaveLength(0);
       expect(second, sensitivity).toEqual([
         expect.objectContaining({ direction: "right" }),
       ]);

@@ -158,7 +158,7 @@ describe("HeadTiltDetector", () => {
     ]);
   });
 
-  it("rejects short spikes, oscillation, and a sub-threshold hold", () => {
+  it("rejects spikes and oscillation but accepts a brief deliberate tilt", () => {
     const spikeDetector = new HeadTiltDetector();
     const spikeStart = calibrate(spikeDetector);
     const spikes = collect(spikeDetector, [
@@ -189,7 +189,7 @@ describe("HeadTiltDetector", () => {
 
     expect(spikes).toHaveLength(0);
     expect(oscillation).toHaveLength(0);
-    expect(brief).toHaveLength(0);
+    expect(brief).toEqual([expect.objectContaining({ direction: "left" })]);
   });
 
   it("cancels a hold when the face is lost", () => {
@@ -211,7 +211,7 @@ describe("HeadTiltDetector", () => {
       face(start + 500, -15),
     ]);
 
-    expect(afterReacquiring).toHaveLength(0);
+    expect(afterReacquiring).toEqual([expect.objectContaining({ direction: "left" })]);
   });
 
   it.each([
@@ -219,7 +219,7 @@ describe("HeadTiltDetector", () => {
     ["medium", 750],
     ["high", 650],
   ] as const)(
-    "requires neutral reset and the %s cooldown",
+    "requires neutral reset for %s movement thresholds",
     (sensitivity: GestureSensitivity, cooldown) => {
       const detector = new HeadTiltDetector(sensitivity);
       const start = calibrate(detector);

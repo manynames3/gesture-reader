@@ -29,19 +29,19 @@ function run(detector: SwipeDetector, samples: PalmSample[]) {
 }
 
 describe("SwipeDetector", () => {
-  it("reports three-frame palm lock progress", () => {
+  it("tracks an open palm immediately without a stationary lock", () => {
     const detector = new SwipeDetector();
 
     detector.push(palm(0, 0.72));
-    expect(detector.getArmProgress()).toBe(1);
+    expect(detector.getArmProgress()).toBe(3);
     detector.push(palm(50, 0.72));
-    expect(detector.getArmProgress()).toBe(2);
+    expect(detector.getArmProgress()).toBe(3);
     detector.push(palm(100, 0.72));
     expect(detector.getArmProgress()).toBe(3);
     expect(detector.getState(100)).toBe("armed");
   });
 
-  it("arms on three of four frames and recognizes one left swipe", () => {
+  it("recognizes exactly one left swipe", () => {
     const detector = new SwipeDetector();
     const detections = run(detector, [
       palm(0, 0.72),
@@ -174,7 +174,7 @@ describe("SwipeDetector", () => {
     expect(detections).toHaveLength(0);
   });
 
-  it("requires reset and cooldown before accepting another swipe", () => {
+  it("requires neutral reset before accepting another swipe", () => {
     const detector = new SwipeDetector();
     const first = run(detector, [
       palm(0, 0.72),
